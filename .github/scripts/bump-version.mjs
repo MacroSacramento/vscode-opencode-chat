@@ -6,6 +6,7 @@
  *   feat(major): ...  -> major bump (0.0.1 -> 1.0.0)
  *   feat(minor): ...  -> minor bump (0.0.1 -> 0.1.0)
  *   feat: ...         -> patch bump (0.0.1 -> 0.0.2)  [no scope]
+ *   feat(release): ... -> release current version, no bump (v0.0.1 -> v0.0.1)
  *   feat(none): ...   -> no bump, no release
  * Unknown scope or non-conventional commit -> no bump, no release.
  *
@@ -31,6 +32,9 @@ if (match) {
     bump = null;
   } else if (scope === 'major' || scope === 'minor') {
     bump = scope;
+  } else if (scope === 'release') {
+    // release current version without bumping
+    bump = 'release';
   } else {
     // no scope or unknown scope -> patch
     bump = 'patch';
@@ -41,6 +45,12 @@ const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 
 if (!bump) {
   console.log('bumped=false');
+  process.exit(0);
+}
+
+if (bump === 'release') {
+  console.log('bumped=true');
+  console.log(`version=${pkg.version}`);
   process.exit(0);
 }
 
