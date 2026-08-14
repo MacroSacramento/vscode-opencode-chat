@@ -50,6 +50,11 @@
         "command": "opencodeChat.refreshSessions",
         "title": "OpenCode: Refresh Sessions",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "opencodeChat.configureCompletion",
+        "title": "OpenCode: Configure Completion",
+        "icon": "$(gear)"
       }
     ],
     "menus": {
@@ -88,6 +93,46 @@
           "type": "boolean",
           "default": true,
           "description": "Only show sessions from the current workspace directory."
+        },
+        "opencodeChat.completion.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable inline code completion (ghost text) via a configured model provider."
+        },
+        "opencodeChat.completion.provider": {
+          "type": "string",
+          "default": "auto",
+          "description": "Completion provider: 'auto' (any provider with a key in opencode auth.json, Zen/Go preferred), 'opencode-zen', 'opencode-go', or any provider id authenticated with opencode (e.g. anthropic, deepseek, openai)."
+        },
+        "opencodeChat.completion.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model to use for completions. Empty = provider default. Set to change models."
+        },
+        "opencodeChat.completion.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Optional API key for OpenCode Zen/Go. If empty, keys are read from opencode's auth.json. Note: keys stored in settings.json are synced by Settings Sync — prefer VS Code's SecretStorage, or leave this empty to use opencode's auth.json instead."
+        },
+        "opencodeChat.completion.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Override base URL for the completion provider (advanced)."
+        },
+        "opencodeChat.completion.customBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for the 'custom' OpenAI-compatible provider."
+        },
+        "opencodeChat.completion.maxTokens": {
+          "type": "number",
+          "default": 128,
+          "description": "Maximum number of tokens to generate per completion."
+        },
+        "opencodeChat.completion.timeout": {
+          "type": "number",
+          "default": 3000,
+          "description": "Request timeout in ms."
         }
       }
     }

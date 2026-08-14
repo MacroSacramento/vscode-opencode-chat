@@ -3,6 +3,7 @@ import { connect, disposeOpenCode, getServerUrl, initOpenCode, isConnected } fro
 import { stopEventStream } from './events';
 import { registerChatViewProvider } from './chatViewProvider';
 import { launchServer } from './serverLauncher';
+import { registerCompletion } from './completionProvider';
 
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:4096';
 const CONNECT_RETRY_MS = 15000;
@@ -71,6 +72,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	void connectAndClear();
 
 	const chatViewProvider = registerChatViewProvider(context, log);
+
+	// Inline completion (ghost text) — bypasses the OpenCode server entirely.
+	registerCompletion(context);
 
 	context.subscriptions.push(
 		outputChannel,
