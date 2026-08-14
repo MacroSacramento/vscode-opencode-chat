@@ -114,6 +114,6 @@ jobs:
           NOTES: ${{ github.event.head_commit.message }}
         run: |
           gh release create "v${{ needs.release.outputs.version }}" \
-            "vsix/opencode-chat-${{ needs.release.outputs.version }}.vsix" \
+            "opencode-chat-${{ needs.release.outputs.version }}.vsix" \
             --title "opencode-chat v${{ needs.release.outputs.version }}" \
             --notes "$NOTES"
