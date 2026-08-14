@@ -11,6 +11,18 @@ Two codebases live in one repo:
 1. **Extension host** — TypeScript in `src/`, bundled to `dist/extension.js` (CJS, esbuild, `external: ['vscode']` only).
 2. **Webview** — plain JS in `media/js/`, bundled to `media/chat.bundle.js` (ESM, browser). Type-checked with `checkJs` via `tsconfig.webview.json`. **Not TypeScript — do not convert it.**
 
+## Commit Messages & Releases
+
+Pushes to `main` run a release workflow: it builds the VSIX, tags, and publishes to GitHub Releases. **The commit message decides whether a release happens** (see `.github/scripts/bump-version.mjs`):
+
+- `feat:` / `fix:` → patch bump (`0.0.1` → `0.0.2`); scope `major`/`minor` bumps that level (`feat(major):` → `1.0.0`).
+- `feat(release):` → releases the current version without bumping (only when the user explicitly asks for a release).
+- `feat(none):` → no bump, no release.
+- **Non-code types (`docs:`, `chore:`, `test:`, `refactor:`, `style:`, ...) never trigger a release** — scope doesn't override this.
+- Non-conventional commit messages → no release.
+
+Use `docs:` for documentation-only changes so no build/release runs. Only commit code changes with `feat:`/`fix:` when a release is intended.
+
 ## Commands
 
 | Command | Purpose |

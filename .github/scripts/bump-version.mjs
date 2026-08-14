@@ -8,6 +8,9 @@
  *   feat: ...         -> patch bump (0.0.1 -> 0.0.2)  [no scope]
  *   feat(release): ... -> release current version, no bump (v0.0.1 -> v0.0.1)
  *   feat(none): ...   -> no bump, no release
+ * Only code-change types (feat, fix) trigger a release. Non-code types
+ * (docs, chore, test, refactor, ...) never do, unless scope is `release`
+ * (explicit release of the current version).
  * Unknown scope or non-conventional commit -> no bump, no release.
  *
  * Prints GitHub Actions outputs (key=value):
@@ -22,21 +25,27 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const pkgPath = resolve(repoRoot, 'package.json');
 const lockPath = resolve(repoRoot, 'package-lock.json');
 
+// Only these commit types trigger a release (code changes).
+const RELEASE_TYPES = new Set(['feat', 'fix']);
+
 const subject = (process.env.COMMIT_MSG || '').split('\n')[0].trim();
-const match = /^[a-zA-Z]+(?:\(([^)]*)\))?:\s/.exec(subject);
+const match = /^([a-zA-Z]+)(?:\(([^)]*)\))?:\s/.exec(subject);
 
 let bump = null; // null -> skip release
 if (match) {
-  const scope = (match[1] ?? '').toLowerCase();
+  const type = match[1].toLowerCase();
+  const scope = (match[2] ?? '').toLowerCase();
+  const isReleaseType = RELEASE_TYPES.has(type);
   if (scope === 'none') {
     bump = null;
   } else if (scope === 'major' || scope === 'minor') {
-    bump = scope;
+    // scope alone never releases: docs(major) is still a docs commit
+    bump = isReleaseType ? scope : null;
   } else if (scope === 'release') {
-    // release current version without bumping
+    // explicit request: release current version, regardless of type
     bump = 'release';
-  } else {
-    // no scope or unknown scope -> patch
+  } else if (isReleaseType) {
+    // feat:/fix: without scope -> patch
     bump = 'patch';
   }
 }
