@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  # Parse the commit message and compute the new version. Cheapest job, runs first.
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      bumped: ${{ steps.bump.outputs.bumped }}
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: latest
+
+      # Bump level comes from the commit message: type(scope): subject
+      #   major/minor scope -> that bump; no scope -> patch; none -> skip release
+      - name: Bump version
+        id: bump
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: node .github/scripts/bump-version.mjs >> "$GITHUB_OUTPUT"
+
+  # Build + package the VSIX. Only when a release is warranted.
+  build:
+    needs: release
+    if: needs.release.outputs.bumped == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: latest
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package VSIX
+        run: npx vsce package --out "opencode-chat-${{ needs.release.outputs.version }}.vsix"
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: opencode-chat-*.vsix
+
+  # Commit the bump, tag, and create the GitHub Release.
+  publish:
+    needs: [release, build]
+    if: needs.release.outputs.bumped == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: latest
+
+      # Re-run the bump on a fresh checkout to reproduce the package.json change.
+      - name: Bump version
+        id: bump
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: node .github/scripts/bump-version.mjs
+
+      - name: Commit version bump and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(release): v${{ needs.release.outputs.version }} [skip ci]"
+          git tag "v${{ needs.release.outputs.version }}"
+          git push origin HEAD:main
+          git push origin "v${{ needs.release.outputs.version }}"
+
+      - name: Download VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          gh release create "v${{ needs.release.outputs.version }}" \
+            "vsix/opencode-chat-${{ needs.release.outputs.version }}.vsix" \
+            --title "opencode-chat v${{ needs.release.outputs.version }}" \
+            --notes "$NOTES"
