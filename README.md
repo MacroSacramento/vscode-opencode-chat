@@ -19,7 +19,12 @@ This extension embeds a full chat UI in the VS Code secondary sidebar. It connec
 
 ## Installation
 
-The extension is not published to a marketplace; install it from the built VSIX or from source.
+The extension is not published to a marketplace; install it from a GitHub release, the built VSIX, or from source.
+
+### From GitHub Releases
+
+1. Go to <https://github.com/MacroSacramento/vscode-opencode-chat/releases> and download the `.vsix` file attached to the latest release.
+2. In VS Code, open **Extensions** (`Ctrl+Shift+X` / `Cmd+Shift+X`), click the `...` menu, and choose **Install from VSIX...**. Select the downloaded `.vsix` file.
 
 ### From VSIX
 
