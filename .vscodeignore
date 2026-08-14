@@ -1,0 +1,16 @@
+node_modules/
+out/
+src/
+resources/
+.opencode/
+.tmp-*
+*.cjs
+tsconfig.json
+esbuild.mjs
+media/js/
+**/*.map
+.gitignore
+.vscode/
+AGENTS.md
+.DS_Store
+*.vsix

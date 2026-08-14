@@ -1,0 +1,113 @@
+{
+  "name": "opencode-chat",
+  "displayName": "OpenCode Chat",
+  "description": "OpenCode chat as its own sidebar panel — session list, history, and streaming responses backed by a local OpenCode server",
+  "version": "0.0.1",
+  "publisher": "macrosacramento",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "opencode",
+          "title": "OpenCode",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "opencode": [
+        {
+          "type": "webview",
+          "id": "opencode.chat",
+          "name": "Chat",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "opencodeChat.newSession",
+        "title": "OpenCode: New Chat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "opencodeChat.openServer",
+        "title": "OpenCode: Open Server URL"
+      },
+      {
+        "command": "opencodeChat.refreshSessions",
+        "title": "OpenCode: Refresh Sessions",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "opencodeChat.newSession",
+          "when": "view == opencode.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "opencodeChat.refreshSessions",
+          "when": "view == opencode.chat",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "opencodeChat.openServer"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "OpenCode Chat",
+      "properties": {
+        "opencodeChat.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:4096",
+          "description": "Base URL of the OpenCode server to connect to."
+        },
+        "opencodeChat.autoStartServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the local OpenCode server automatically when it is not running (loopback URLs only)."
+        },
+        "opencodeChat.workspaceFilter": {
+          "type": "boolean",
+          "default": true,
+          "description": "Only show sessions from the current workspace directory."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "check:webview": "tsc -p ./tsconfig.webview.json",
+    "watch": "node esbuild.mjs --watch",
+    "build": "node esbuild.mjs",
+    "package": "npm run build && vsce package",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.18.18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.106.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}
