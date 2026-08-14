@@ -105,15 +105,18 @@ let lastLoggedMessage = '';
 
 /**
  * Replaces credential-shaped substrings (OpenAI `sk-`, opencode `oc_`, Google
- * `AIza` tokens) so error envelopes echoing an API key never reach the output
- * channel.
+ * `AIza`, xAI `xai-`, Groq `gsk_`, Perplexity `pplx-` tokens) so error
+ * envelopes echoing an API key never reach the output channel.
  */
 function redactSecrets(text: string): string {
-  return text.replace(/\b(sk-[A-Za-z0-9_\-]+|oc_[A-Za-z0-9_\-]+|AIza[A-Za-z0-9_\-]+)\b/g, '[REDACTED]');
+  return text.replace(
+    /\b(sk-[A-Za-z0-9_\-]+|oc_[A-Za-z0-9_\-]+|AIza[A-Za-z0-9_\-]+|xai-[A-Za-z0-9_\-]+|gsk_[A-Za-z0-9_\-]+|pplx-[A-Za-z0-9_\-]+)\b/g,
+    '[REDACTED]'
+  );
 }
 
 /** Rate-limited logger so repeated keystroke failures don't spam the channel. */
-function log(message: string): void {
+export function log(message: string): void {
   const redacted = redactSecrets(message);
   const now = Date.now();
   if (redacted === lastLoggedMessage && now - lastLoggedAt < 5000) {
@@ -197,28 +200,34 @@ function createBackend(
   kind: string,
   key: string,
   modelOverride: string,
-  maxTokens: number
+  maxTokens: number,
+  factoryOpts: ChatFactoryOpts = {}
 ): CompletionBackend | null {
   const model = modelOverride || undefined;
 
   switch (kind) {
     case 'opencode-zen': {
       const baseUrl = configString('completion.baseUrl') || ZEN_BASE_URL;
-      // Paid default regardless of key source; the free tier fails with a
-      // graceful 402/403 (logged, silently swallowed).
+      // Paid default regardless of key source; free-tier keys are balance-based
+      // and indistinguishable from paid ones, so a 402/403 is retried once on
+      // the free-tier model. An explicit user model choice is respected as-is.
       const defaultModel = 'deepseek-v4-flash';
       return makeOpenAICompatBackend('opencode-zen', 'OpenCode Zen', baseUrl, model ?? defaultModel, key, maxTokens, {
+        ...factoryOpts,
         thinkingDisabled: true,
+        freeTierFallbackModel: model === undefined ? 'deepseek-v4-flash-free' : undefined,
       });
     }
     case 'opencode-go': {
       const baseUrl = configString('completion.baseUrl') || GO_BASE_URL;
       return makeOpenAICompatBackend('opencode-go', 'OpenCode Go', baseUrl, model ?? DEFAULT_MODELS['opencode-go'], key, maxTokens, {
+        ...factoryOpts,
         thinkingDisabled: true,
+        freeTierFallbackModel: model === undefined ? 'deepseek-v4-flash-free' : undefined,
       });
     }
     case 'anthropic':
-      return makeAnthropicBackend(key, model ?? DEFAULT_MODELS.anthropic, maxTokens);
+      return makeAnthropicBackend(key, model ?? DEFAULT_MODELS.anthropic, maxTokens, factoryOpts);
     case 'custom': {
       const baseUrl = configString('completion.customBaseUrl');
       if (baseUrl === '') {
@@ -229,7 +238,10 @@ function createBackend(
         log('completion provider "custom" needs opencodeChat.completion.model');
         return null;
       }
-      return makeOpenAICompatBackend('custom', 'Custom', baseUrl, model, key, maxTokens, { noAuth: !key });
+      return makeOpenAICompatBackend('custom', 'Custom', baseUrl, model, key, maxTokens, {
+        ...factoryOpts,
+        noAuth: !key,
+      });
     }
     default: {
       // completion.baseUrl applies ONLY to opencode-zen/opencode-go; every
@@ -241,33 +253,42 @@ function createBackend(
         return null;
       }
       return makeOpenAICompatBackend(kind, kind, baseUrl, model ?? DEFAULT_MODELS[kind] ?? '', key, maxTokens, {
+        ...factoryOpts,
         noAuth: kind === 'ollama',
       });
     }
   }
 }
 
+interface ResolvedBackendConfig {
+  kind: string;
+  key: string;
+  modelOverride: string;
+}
+
 /**
- * Determines the single backend for one request from the `completion.provider`
- * setting. Returns null (silently) when nothing is configured/usable.
+ * Resolves which provider/model/key a request should use from the
+ * `completion.provider` setting. Shared by ghost text, the exported
+ * `queryModel`, and the commit-message command (which needs to distinguish
+ * "nothing configured" from a failed request). Returns null (silently) when
+ * nothing is configured/usable.
  */
-function resolveBackend(): CompletionBackend | null {
+export function resolveBackendConfig(): ResolvedBackendConfig | null {
   const provider = configString('completion.provider') || 'auto';
   const modelOverride = configString('completion.model');
   const configApiKey = configString('completion.apiKey');
-  const maxTokens = vscode.workspace.getConfiguration('opencodeChat').get<number>('completion.maxTokens', 128);
   const auth = readAuthProviders();
 
   if (provider === 'auto') {
     // Explicit config key wins; otherwise take the first authenticated provider
     // with a known backend mapping, in preference order.
     if (configApiKey !== '') {
-      return createBackend('opencode-zen', configApiKey, modelOverride, maxTokens);
+      return { kind: 'opencode-zen', key: configApiKey, modelOverride };
     }
     for (const id of AUTO_PICK_ORDER) {
       const key = auth.get(id);
       if (key !== undefined) {
-        return createBackend(id, key, modelOverride, maxTokens);
+        return { kind: id, key, modelOverride };
       }
     }
     return null;
@@ -279,12 +300,12 @@ function resolveBackend(): CompletionBackend | null {
       log(`completion provider '${provider}' has no API key — set opencodeChat.completion.apiKey or authenticate with opencode`);
       return null;
     }
-    return createBackend(provider, key, modelOverride, maxTokens);
+    return { kind: provider, key, modelOverride };
   }
 
   if (provider === 'custom') {
     const key = configApiKey || auth.get('custom') || '';
-    return createBackend('custom', key, modelOverride, maxTokens);
+    return { kind: 'custom', key, modelOverride };
   }
 
   // Any other string is an auth.json provider id.
@@ -294,30 +315,39 @@ function resolveBackend(): CompletionBackend | null {
     return null;
   }
   if (KNOWN_BACKENDS.has(provider)) {
-    return createBackend(provider, key, modelOverride, maxTokens);
+    return { kind: provider, key, modelOverride };
   }
   // Authenticated but unknown — treat as a custom provider entry.
   log(`completion provider '${provider}' has no known backend — falling back to the custom base URL`);
-  return createBackend('custom', key, modelOverride, maxTokens);
+  return { kind: 'custom', key, modelOverride };
+}
+
+/**
+ * Determines the single backend for one request from the `completion.provider`
+ * setting. Returns null (silently) when nothing is configured/usable.
+ */
+function resolveBackend(): CompletionBackend | null {
+  const config = resolveBackendConfig();
+  if (config === null) {
+    return null;
+  }
+  const maxTokens = vscode.workspace.getConfiguration('opencodeChat').get<number>('completion.maxTokens', 128);
+  return createBackend(config.kind, config.key, config.modelOverride, maxTokens);
 }
 
 // ---------------------------------------------------------------------------
 // Prompt construction
 // ---------------------------------------------------------------------------
 
-function buildUserContent(prefix: string, suffix: string): string {
-  return INSTRUCTION + '\n\n```\n' + prefix + '<CURSOR>' + suffix + '\n```';
-}
-
 /** Strips markdown fences, an echoed prompt tail, and rejects garbage results. */
-function cleanCompletion(result: string, prefix: string): string | null {
+function cleanCompletion(result: string, prefix: string, instruction: string = INSTRUCTION): string | null {
   let text = result.trimEnd().replace(/^\n+/, '');
   if (text.trim().length === 0) {
     return null;
   }
   // Reject outputs that re-emit the instruction or contain the cursor sentinel
   // (models sometimes echo the prompt back instead of completing).
-  if (text.includes(INSTRUCTION) || text.includes('<CURSOR>')) {
+  if (text.includes(instruction) || text.includes('<CURSOR>')) {
     return null;
   }
   // Strip a leading markdown code fence (``` or ```lang) and a trailing one.
@@ -347,6 +377,14 @@ interface ChatBackendOptions {
   headers?: Record<string, string>;
   buildBody: (prefix: string, suffix: string) => Record<string, unknown>;
   extract: (data: unknown) => string | null;
+  /** Timeout floor in ms — the configured completion.timeout is still respected but never goes below this. */
+  timeoutFloorMs?: number;
+  /**
+   * Optional body builder used for a single retry when the provider answers
+   * with a payment-status error (402/403) — e.g. free-tier Zen/Go keys on the
+   * paid model. Unset for backends without a free-tier fallback.
+   */
+  retryBody?: (prefix: string, suffix: string) => Record<string, unknown>;
 }
 
 /**
@@ -358,7 +396,8 @@ function makeChatBackend(opts: ChatBackendOptions): CompletionBackend {
     id: opts.id,
     label: opts.label,
     async complete(prefix, suffix, signal): Promise<string | null> {
-      const timeoutMs = vscode.workspace.getConfiguration('opencodeChat').get<number>('completion.timeout', 3000);
+      const configuredTimeout = vscode.workspace.getConfiguration('opencodeChat').get<number>('completion.timeout', 3000);
+      const timeoutMs = opts.timeoutFloorMs === undefined ? configuredTimeout : Math.max(configuredTimeout, opts.timeoutFloorMs);
       const controller = new AbortController();
       const onAbort = (): void => controller.abort();
       let timedOut = false;
@@ -371,24 +410,46 @@ function makeChatBackend(opts: ChatBackendOptions): CompletionBackend {
         timedOut = true;
         controller.abort();
       }, timeoutMs);
-      try {
+
+      // Sends one POST and reports the outcome; failures are logged here
+      // (identical messages to the previous inline flow).
+      const doRequest = async (
+        body: Record<string, unknown>
+      ): Promise<{ httpError: boolean; status: number; result: string | null }> => {
         const response = await fetch(opts.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
-          body: JSON.stringify(opts.buildBody(prefix, suffix)),
+          body: JSON.stringify(body),
           signal: controller.signal,
         });
         if (!response.ok) {
           const detail = await response.text().catch(() => '');
           log(`${opts.label}: HTTP ${response.status}${detail !== '' ? ` — ${detail.slice(0, 200)}` : ''}`);
-          return null;
+          return { httpError: true, status: response.status, result: null };
         }
         const data: unknown = await response.json().catch(() => null);
         if (data === null) {
           log(`${opts.label}: response was not valid JSON`);
-          return null;
+          return { httpError: false, status: response.status, result: null };
         }
-        return opts.extract(data);
+        return { httpError: false, status: response.status, result: opts.extract(data) };
+      };
+
+      try {
+        const first = await doRequest(opts.buildBody(prefix, suffix));
+        if (first.result !== null) {
+          return first.result;
+        }
+        // Free-tier Zen/Go keys are balance-based and indistinguishable from
+        // paid ones, so a 402/403 on the paid model means "no balance" — retry
+        // ONCE on the free-tier model. Only payment-status errors retry; never
+        // other failures or empty responses. Paid users never 402 → no overhead.
+        if (first.httpError && (first.status === 402 || first.status === 403) && opts.retryBody !== undefined) {
+          log(`${opts.label}: HTTP ${first.status} — retrying once with the free-tier model`);
+          const retried = await doRequest(opts.retryBody(prefix, suffix));
+          return retried.result;
+        }
+        return null;
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
           if (timedOut) {
@@ -427,6 +488,27 @@ function contentToString(content: unknown): string | null {
   return null;
 }
 
+/**
+ * Backend factory options. Ghost text only sets `thinkingDisabled`/`noAuth`;
+ * the remaining fields let other features (e.g. commit-message generation)
+ * reuse the same factories with a custom instruction, a different fence
+ * language, no `<CURSOR>` sentinel, and a longer timeout floor.
+ */
+interface ChatFactoryOpts {
+  thinkingDisabled?: boolean;
+  noAuth?: boolean;
+  instruction?: string;
+  fenceLang?: string;
+  /** `null` omits the cursor sentinel entirely (custom instruction mode). */
+  cursorSentinel?: string | null;
+  timeoutFloorMs?: number;
+  /**
+   * Free-tier model used for a single 402/403 retry. Set only by the Zen/Go
+   * backends when the user did not explicitly pick a model.
+   */
+  freeTierFallbackModel?: string;
+}
+
 function makeOpenAICompatBackend(
   id: string,
   label: string,
@@ -434,17 +516,22 @@ function makeOpenAICompatBackend(
   model: string,
   key: string,
   maxTokens: number,
-  opts: { thinkingDisabled?: boolean; noAuth?: boolean } = {}
+  opts: ChatFactoryOpts = {}
 ): CompletionBackend {
-  return makeChatBackend({
-    id,
-    label,
-    url: `${baseUrl.replace(/\/+$/, '')}/chat/completions`,
-    headers: opts.noAuth === true ? {} : { Authorization: `Bearer ${key}` },
-    buildBody: (prefix, suffix) => {
+  const buildBodyForModel = (modelName: string): ((prefix: string, suffix: string) => Record<string, unknown>) => {
+    return (prefix, suffix) => {
+      const instruction = opts.instruction ?? INSTRUCTION;
       const body: Record<string, unknown> = {
-        model,
-        messages: [{ role: 'user', content: buildUserContent(prefix, suffix) }],
+        model: modelName,
+        messages: [
+          {
+            role: 'user',
+            content:
+              opts.cursorSentinel === null
+                ? `${instruction}\n\n\`\`\`${opts.fenceLang ?? ''}\n${prefix}${suffix}\n\`\`\``
+                : `${instruction}\n\n\`\`\`\n${prefix}${opts.cursorSentinel ?? '<CURSOR>'}${suffix}\n\`\`\``,
+          },
+        ],
         max_tokens: maxTokens,
         stream: false,
       };
@@ -452,7 +539,16 @@ function makeOpenAICompatBackend(
         body.thinking = { type: 'disabled' };
       }
       return body;
-    },
+    };
+  };
+  return makeChatBackend({
+    id,
+    label,
+    url: `${baseUrl.replace(/\/+$/, '')}/chat/completions`,
+    headers: opts.noAuth === true ? {} : { Authorization: `Bearer ${key}` },
+    timeoutFloorMs: opts.timeoutFloorMs,
+    buildBody: buildBodyForModel(model),
+    retryBody: opts.freeTierFallbackModel === undefined ? undefined : buildBodyForModel(opts.freeTierFallbackModel),
     extract: (data) => contentToString((data as OpenAICompatResponse)?.choices?.[0]?.message?.content),
   });
 }
@@ -470,18 +566,25 @@ function anthropicSupportsThinkingField(model: string): boolean {
   return /^claude-(3-7|3-8|3-9|4)/.test(model) || /sonnet-4|opus-4|haiku-3-5/.test(model);
 }
 
-function makeAnthropicBackend(key: string, model: string, maxTokens: number): CompletionBackend {
+function makeAnthropicBackend(key: string, model: string, maxTokens: number, opts: ChatFactoryOpts = {}): CompletionBackend {
   return makeChatBackend({
     id: 'anthropic',
     label: 'Anthropic',
     url: ANTHROPIC_BASE_URL,
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    timeoutFloorMs: opts.timeoutFloorMs,
     buildBody: (prefix, suffix) => {
+      const instruction = opts.instruction ?? INSTRUCTION;
       const body: Record<string, unknown> = {
         model,
         max_tokens: maxTokens,
-        system: INSTRUCTION,
-        messages: [{ role: 'user', content: prefix + '<CURSOR>' + suffix }],
+        system: instruction,
+        messages: [
+          {
+            role: 'user',
+            content: opts.cursorSentinel === null ? prefix + suffix : prefix + (opts.cursorSentinel ?? '<CURSOR>') + suffix,
+          },
+        ],
       };
       if (anthropicSupportsThinkingField(model)) {
         body.thinking = { type: 'disabled' };
@@ -689,6 +792,50 @@ async function runCompletion(
 }
 
 // ---------------------------------------------------------------------------
+// Shared model query (used by the commit-message command)
+// ---------------------------------------------------------------------------
+
+const COMMIT_MAX_TOKENS = 300;
+const COMMIT_TIMEOUT_FLOOR_MS = 10_000;
+
+/**
+ * One-off model query reusing the SAME backend resolution as inline completion
+ * (provider/model config, keys from config or opencode auth.json). Sends
+ * `instruction` + `input` (fenced as a diff) and returns cleaned text.
+ * Never throws — failures are logged to the completion output channel and
+ * result in null. Ghost-text behavior is unaffected.
+ */
+export async function queryModel(
+  instruction: string,
+  input: string,
+  signal: AbortSignal
+): Promise<string | null> {
+  try {
+    const config = resolveBackendConfig();
+    if (config === null) {
+      return null;
+    }
+    const backend = createBackend(config.kind, config.key, config.modelOverride, COMMIT_MAX_TOKENS, {
+      instruction,
+      fenceLang: 'diff',
+      cursorSentinel: null,
+      timeoutFloorMs: COMMIT_TIMEOUT_FLOOR_MS,
+    });
+    if (backend === null) {
+      return null;
+    }
+    const result = await backend.complete(input, '', signal);
+    if (result === null) {
+      return null;
+    }
+    return cleanCompletion(result, '', instruction);
+  } catch (err) {
+    log(`queryModel failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Configure command
 // ---------------------------------------------------------------------------
 
@@ -751,11 +898,15 @@ async function configureCompletion(): Promise<void> {
 
   const authProviders = readAuthProviders();
   const providerItems: vscode.QuickPickItem[] = [
-    { label: 'auto', description: 'Recommended — any provider with a key in opencode auth.json, Zen/Go preferred' },
+    { label: 'auto', description: 'Recommended — OpenCode Zen/Go if a key is available, else the first provider authenticated with opencode' },
     { label: 'opencode-zen', description: 'OpenCode Zen backend' },
     { label: 'opencode-go', description: 'OpenCode Go backend' },
   ];
+  const listedIds = new Set(['auto', 'opencode-zen', 'opencode-go', 'custom', 'disable']);
   for (const id of authProviders.keys()) {
+    if (listedIds.has(id)) {
+      continue; // already listed above (e.g. opencode-go is a common auth.json provider)
+    }
     providerItems.push({ label: id, description: 'Provider authenticated in opencode auth.json' });
   }
   providerItems.push({ label: 'custom', description: 'OpenAI-compatible provider with a custom base URL' });

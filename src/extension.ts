@@ -4,6 +4,7 @@ import { stopEventStream } from './events';
 import { registerChatViewProvider } from './chatViewProvider';
 import { launchServer } from './serverLauncher';
 import { registerCompletion } from './completionProvider';
+import { registerCommitMessage } from './commitMessage';
 
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:4096';
 const CONNECT_RETRY_MS = 15000;
@@ -28,11 +29,11 @@ export function activate(context: vscode.ExtensionContext): void {
 	const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
 	statusBarItem.command = 'opencodeChat.openServer';
 	statusBarItem.tooltip = 'OpenCode server status — click to open the server URL';
-	statusBarItem.text = '$(hubot) OpenCode: disconnected';
+	statusBarItem.text = 'OpenCode: disconnected';
 	statusBarItem.show();
 
 	const onStateChange = (connected: boolean): void => {
-		statusBarItem.text = connected ? '$(hubot) OpenCode: connected' : '$(hubot) OpenCode: disconnected';
+		statusBarItem.text = connected ? 'OpenCode: connected' : 'OpenCode: disconnected';
 		log(connected ? 'Connected to OpenCode server' : 'Disconnected from OpenCode server');
 	};
 
@@ -75,6 +76,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	// Inline completion (ghost text) — bypasses the OpenCode server entirely.
 	registerCompletion(context);
+
+	// User-initiated commit message generation — reuses the completion provider.
+	registerCommitMessage(context);
 
 	context.subscriptions.push(
 		outputChannel,

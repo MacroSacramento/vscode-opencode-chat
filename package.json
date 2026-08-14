@@ -55,6 +55,14 @@
         "command": "opencodeChat.configureCompletion",
         "title": "OpenCode: Configure Completion",
         "icon": "$(gear)"
+      },
+      {
+        "command": "opencodeChat.generateCommitMessage",
+        "title": "OpenCode: Generate Commit Message",
+        "icon": {
+          "light": "media/opencode-logo-light.svg",
+          "dark": "media/opencode-logo-dark.svg"
+        }
       }
     ],
     "menus": {
@@ -73,6 +81,16 @@
       "commandPalette": [
         {
           "command": "opencodeChat.openServer"
+        },
+        {
+          "command": "opencodeChat.generateCommitMessage"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "opencodeChat.generateCommitMessage",
+          "when": "scmProvider == git",
+          "group": "navigation"
         }
       ]
     },
@@ -102,7 +120,7 @@
         "opencodeChat.completion.provider": {
           "type": "string",
           "default": "auto",
-          "description": "Completion provider: 'auto' (any provider with a key in opencode auth.json, Zen/Go preferred), 'opencode-zen', 'opencode-go', or any provider id authenticated with opencode (e.g. anthropic, deepseek, openai)."
+          "description": "Completion provider: 'auto' (OpenCode Zen/Go if a key is available, else the first provider authenticated with opencode), 'opencode-zen', 'opencode-go', or any provider id authenticated with opencode: anthropic, deepseek, openai, google, groq, openrouter, xai, mistral, ollama, custom (requires completion.customBaseUrl)."
         },
         "opencodeChat.completion.model": {
           "type": "string",
