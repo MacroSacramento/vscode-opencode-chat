@@ -2,7 +2,7 @@
   "name": "opencode-chat",
   "displayName": "OpenCode Chat",
   "description": "OpenCode chat as its own sidebar panel — session list, history, and streaming responses backed by a local OpenCode server",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "macrosacramento",
   "license": "MIT",
   "engines": {
