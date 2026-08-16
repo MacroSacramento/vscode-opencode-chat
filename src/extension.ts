@@ -96,6 +96,19 @@ export function activate(context: vscode.ExtensionContext): void {
 			void vscode.commands.executeCommand('opencode.chat.focus');
 			void chatViewProvider.refreshSessionsList();
 		}),
+		vscode.commands.registerCommand('opencodeChat.insertContext', () => {
+			const editor = vscode.window.activeTextEditor;
+			if (editor === undefined) {
+				void vscode.window.showWarningMessage('OpenCode: No active editor to insert context from.');
+				return;
+			}
+			const selection = editor.selection;
+			const text = selection.isEmpty ? editor.document.getText() : editor.document.getText(selection);
+			if (text === '') {
+				return;
+			}
+			chatViewProvider.insertContext(text, vscode.workspace.asRelativePath(editor.document.uri, false));
+		}),
 		vscode.workspace.onDidChangeConfiguration((event) => {
 			if (event.affectsConfiguration('opencodeChat.serverUrl')) {
 				log('Server URL configuration changed — reconnecting');

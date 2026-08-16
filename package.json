@@ -63,6 +63,18 @@
           "light": "media/opencode-logo-light.svg",
           "dark": "media/opencode-logo-dark.svg"
         }
+      },
+      {
+        "command": "opencodeChat.insertContext",
+        "title": "OpenCode: Insert Editor Context"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "opencodeChat.insertContext",
+        "key": "ctrl+k ctrl+i",
+        "mac": "cmd+k cmd+i",
+        "when": "editorTextFocus"
       }
     ],
     "menus": {

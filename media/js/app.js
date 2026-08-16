@@ -31,6 +31,7 @@ import {
   selectAtItem,
   closeAtPopup,
   renderAtPopup,
+  insertContext,
 } from './composer.js';
 import {
   updateMetaBadges,
@@ -172,6 +173,9 @@ function route(msg) {
         state.stoppedStream = false;
         updateComposerState();
       }
+      break;
+    case 'insertContext':
+      insertContext(typeof msg.text === 'string' ? msg.text : '', typeof msg.label === 'string' ? msg.label : '');
       break;
     default:
       break;

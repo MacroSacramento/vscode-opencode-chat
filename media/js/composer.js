@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { post, maybeScrollBottom } from './utils.js';
+import { post, maybeScrollBottom, showToast } from './utils.js';
 import { escapeHtml, linkify } from './markdown.js';
 import { updateEmptyStates } from './sessions.js';
 import { updateMetaBadges, openAgentMenu, openModelMenu, showHelp } from './pickers.js';
@@ -110,6 +110,28 @@ export function autoGrow() {
   const input = state.input;
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+}
+
+// Inserts host-provided editor context (keybind) at the caret, or appends
+// when the composer is not focused. Popups are closed first so the insert
+// never lands inside an open menu.
+export function insertContext(text, label) {
+  if (typeof text !== 'string' || text === '') {
+    return;
+  }
+  closeSlashPopup();
+  closeAtPopup();
+  const input = state.input;
+  const focused = document.activeElement === input;
+  const start = focused && input.selectionStart != null ? input.selectionStart : input.value.length;
+  const end = focused && input.selectionEnd != null ? input.selectionEnd : start;
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  autoGrow();
+  updateComposerState();
+  if (typeof label === 'string' && label !== '') {
+    showToast('Inserted ' + label);
+  }
+  input.focus();
 }
 
 export function send() {

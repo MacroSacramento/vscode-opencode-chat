@@ -82,7 +82,7 @@ esbuild.mjs               Dual build config
 
 Contract lives in `src/webview/types.ts`. No runtime validation — both sides must stay in sync manually when adding messages.
 
-- **host → webview:** `connected, sessions, history, delta, message, busy, sessionDeleted, catalog, sessionMeta, nativeResult, subagents, files, permission, permissionResolved, question, questionResolved, error`
+- **host → webview:** `connected, sessions, history, delta, message, busy, sessionDeleted, catalog, sessionMeta, nativeResult, subagents, files, permission, permissionResolved, question, questionResolved, error, insertContext`
 - **webview → host:** `ready, selectSession, prompt, newSession, deleteSession, refreshSessions, executeCommand, nativeCommand, setAgent, setModel, getCatalog, setSubagentsVisible, getFiles, permissionReply, questionReply`
 
 `prompt`/`newSession` carry optional `files` (workspace-relative paths for `@file` mentions → server reads them via `file://` URLs) and `agent` (per-prompt agent override from `@agent` mentions — does not persist, unlike setAgent). `getFiles` → `files` (array of `{path, name}`) lists workspace files for the `@` mention popup.

@@ -139,6 +139,7 @@ Behavior:
 | `OpenCode: Refresh Sessions` | Focus the chat view and refresh the session list |
 | `OpenCode: Configure Completion` | Pick the completion provider and model (also in Settings) |
 | `OpenCode: Generate Commit Message` | Generate a commit message from your changes (also in the SCM view title bar) |
+| `OpenCode: Insert Editor Context` | Insert the active editor's text (selection, or the whole document if none) into the chat composer at the caret — default keybind `cmd+k cmd+i` (mac) / `ctrl+k ctrl+i` (other) |
 
 ## Configuration
 

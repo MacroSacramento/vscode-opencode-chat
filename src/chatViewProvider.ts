@@ -126,6 +126,11 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
     await this.sessions.refresh();
   }
 
+  /** Posts editor context text for the webview to insert into the composer. */
+  insertContext(text: string, label: string): void {
+    this.post({ type: 'insertContext', text, label });
+  }
+
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.webviewView = webviewView;
     const webview = webviewView.webview;
