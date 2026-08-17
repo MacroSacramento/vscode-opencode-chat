@@ -68,6 +68,14 @@ export function registerChatViewProvider(
   const armTimer = setInterval(() => provider.armEventStream(), STREAM_ARM_INTERVAL_MS);
   context.subscriptions.push({ dispose: () => clearInterval(armTimer) });
 
+  // Re-filter the session list when the workspace folder set changes so the
+  // sidebar always reflects the project(s) currently open in VS Code.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void provider.refreshSessionsList();
+    }),
+  );
+
   provider.armEventStream();
   return provider;
 }

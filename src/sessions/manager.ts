@@ -137,6 +137,13 @@ export class SessionManager {
         title: session.title.trim() === '' ? 'Untitled session' : session.title,
         updated: session.time.updated,
       }));
+      // Drop the active session when it no longer belongs to the current
+      // workspace (e.g. its folder was closed or the project changed), so the
+      // webview never keeps showing a foreign session's history.
+      if (this.activeSessionId !== undefined && !this.lastSessions.some((s) => s.id === this.activeSessionId)) {
+        this.activeSessionId = undefined;
+        await this.ctx.workspaceState.update(ACTIVE_SESSION_KEY, undefined);
+      }
       this.ctx.post({ type: 'connected', connected: true });
       this.ctx.post({ type: 'sessions', sessions: this.lastSessions, activeSessionId: this.activeSessionId });
     } catch (err) {
@@ -155,10 +162,11 @@ export class SessionManager {
    * Filters sessions to the current workspace (opt-out via
    * `opencodeChat.workspaceFilter`), sorted by most recently updated.
    *
-   * The anchor directory is the workspace folder when one is open, otherwise
-   * the OpenCode server's own project directory (`/path`). A session matches
-   * when its directory equals the anchor or lives under it (subfolder
-   * workspaces), so global sessions from other projects never appear.
+   * The anchor directories are the open workspace folders (all of them, for
+   * multi-root workspaces); when none are open, the OpenCode server's own
+   * project directory (`/path`) is used. A session matches when its directory
+   * equals an anchor or lives under it (subfolder workspaces), so sessions
+   * from other projects never appear.
    */
   private async filterSessions(all: Session[]): Promise<Session[]> {
     // Subagent sessions (parentID set) are children of a parent session and
@@ -170,22 +178,30 @@ export class SessionManager {
     if (!enabled) {
       return topLevel;
     }
-    let anchor = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (anchor === undefined) {
+    const folders = vscode.workspace.workspaceFolders;
+    let anchors: string[] | undefined;
+    if (folders !== undefined && folders.length > 0) {
+      anchors = folders.map((folder) => folder.uri.fsPath);
+    } else {
       try {
         const res = await getClient().path.get();
-        anchor = res.data?.directory;
+        const dir = res.data?.directory;
+        if (dir !== undefined) {
+          anchors = [dir];
+        }
       } catch {
         return topLevel;
       }
     }
-    if (anchor === undefined) {
+    if (anchors === undefined) {
       return topLevel;
     }
-    const rootDir = anchor.replace(/[\\/]+$/, '');
+    const roots = anchors.map((anchor) => anchor.replace(/[\\/]+$/, ''));
     return topLevel.filter((session) => {
       const dir = session.directory;
-      return dir === rootDir || dir.startsWith(rootDir + '/') || dir.startsWith(rootDir + '\\');
+      return roots.some(
+        (root) => dir === root || dir.startsWith(root + '/') || dir.startsWith(root + '\\'),
+      );
     });
   }
 }

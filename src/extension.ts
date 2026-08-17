@@ -1,23 +1,42 @@
 import * as vscode from 'vscode';
-import { connect, disposeOpenCode, getServerUrl, initOpenCode, isConnected } from './opencodeClient';
+import { connect, disposeOpenCode, getClient, getServerUrl, initOpenCode, isConnected } from './opencodeClient';
 import { stopEventStream } from './events';
 import { registerChatViewProvider } from './chatViewProvider';
-import { launchServer } from './serverLauncher';
+import { launchServer, stopServer } from './serverLauncher';
 import { registerCompletion } from './completionProvider';
 import { registerCommitMessage } from './commitMessage';
+import { resolveServerUrl } from './serverUrl';
 
-const DEFAULT_SERVER_URL = 'http://127.0.0.1:4096';
 const CONNECT_RETRY_MS = 15000;
 
 /** Server URL we already attempted to auto-start, so each URL spawns once per session. */
 let spawnAttemptedForUrl: string | undefined;
 
-function getConfiguredServerUrl(): string {
-	return vscode.workspace.getConfiguration('opencodeChat').get<string>('serverUrl') ?? DEFAULT_SERVER_URL;
-}
-
 function shouldAutoStart(): boolean {
 	return vscode.workspace.getConfiguration('opencodeChat').get<boolean>('autoStartServer') ?? true;
+}
+
+/**
+ * Warns when the connected server is rooted at a different directory than the
+ * open workspace folder — a sign the derived port is occupied by a server for
+ * another project (or a foreign process). Non-fatal: the connection itself is
+ * healthy, but sessions will be filtered to the wrong project.
+ */
+async function verifyServerDirectory(log: (message: string) => void): Promise<void> {
+	const folder = vscode.workspace.workspaceFolders?.[0];
+	if (folder === undefined) {
+		return;
+	}
+	try {
+		const res = await getClient().path.get();
+		const serverDir = res.data?.directory;
+		const normalize = (p: string): string => p.replace(/[\\/]+$/, '');
+		if (serverDir !== undefined && normalize(serverDir) !== normalize(folder.uri.fsPath)) {
+			log(`Warning: server at ${getServerUrl()} is rooted at ${serverDir}, not ${folder.uri.fsPath}. The port may be shared with another project's server.`);
+		}
+	} catch {
+		// Non-fatal — the health check already passed.
+	}
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -38,7 +57,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	};
 
 	const init = (): void => {
-		initOpenCode({ serverUrl: getConfiguredServerUrl(), onStateChange, log });
+		initOpenCode({ serverUrl: resolveServerUrl(), onStateChange, log });
 	};
 
 	init();
@@ -51,12 +70,22 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (!isConnected()) {
 				await connect();
 			}
+			if (isConnected()) {
+				await verifyServerDirectory(log);
+			}
 			if (!isConnected() && shouldAutoStart() && spawnAttemptedForUrl !== getServerUrl()) {
 				spawnAttemptedForUrl = getServerUrl();
-				launchServer(getServerUrl(), log);
+				// Anchor the server to the open workspace folder so sessions are
+				// created in the project VS Code has open (the filter in
+				// SessionManager relies on session.directory matching it).
+				const workspaceCwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+				launchServer(getServerUrl(), log, workspaceCwd);
 				await new Promise((resolve) => setTimeout(resolve, 2000));
 				if (!isConnected()) {
 					await connect();
+				}
+				if (isConnected()) {
+					await verifyServerDirectory(log);
 				}
 			}
 		} catch (err) {
@@ -66,6 +95,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	const retryTimer = setInterval(() => {
 		if (!isConnected()) {
+			// The previous auto-start may have exited (e.g. another window
+			// closed and killed a shared server) — allow a fresh spawn attempt.
+			spawnAttemptedForUrl = undefined;
 			void connectAndClear();
 		}
 	}, CONNECT_RETRY_MS);
@@ -79,6 +111,25 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	// User-initiated commit message generation — reuses the completion provider.
 	registerCommitMessage(context);
+
+	// Reconnect when the effective server URL changes — either the serverUrl/
+	// autoStartServer config or the open workspace folder (the URL is derived
+	// from the folder, so switching projects moves this window to its own
+	// server).
+	const reconnect = (reason: string): void => {
+		const nextUrl = resolveServerUrl();
+		if (nextUrl === getServerUrl()) {
+			return;
+		}
+		log(`${reason} — reconnecting (${getServerUrl()} -> ${nextUrl})`);
+		spawnAttemptedForUrl = undefined;
+		stopEventStream();
+		disposeOpenCode();
+		// The old URL's server belongs to this window — stop it when moving on.
+		stopServer();
+		init();
+		void connect();
+	};
 
 	context.subscriptions.push(
 		outputChannel,
@@ -110,14 +161,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			chatViewProvider.insertContext(text, vscode.workspace.asRelativePath(editor.document.uri, false));
 		}),
 		vscode.workspace.onDidChangeConfiguration((event) => {
-			if (event.affectsConfiguration('opencodeChat.serverUrl')) {
-				log('Server URL configuration changed — reconnecting');
-				spawnAttemptedForUrl = undefined;
-				stopEventStream();
-				disposeOpenCode();
-				init();
-				void connect();
+			if (event.affectsConfiguration('opencodeChat.serverUrl') || event.affectsConfiguration('opencodeChat.autoStartServer')) {
+				reconnect('Server configuration changed');
 			}
+		}),
+		vscode.workspace.onDidChangeWorkspaceFolders(() => {
+			reconnect('Workspace folder changed');
 		})
 	);
 }
@@ -125,4 +174,6 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
 	disposeOpenCode();
 	stopEventStream();
+	// Close the per-window server with the window.
+	stopServer();
 }

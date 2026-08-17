@@ -112,12 +112,12 @@
         "opencodeChat.serverUrl": {
           "type": "string",
           "default": "http://127.0.0.1:4096",
-          "description": "Base URL of the OpenCode server to connect to."
+          "description": "Base URL of the OpenCode server to connect to. When autoStartServer is enabled and a workspace folder is open, a per-window server is started on a port derived from the folder path instead."
         },
         "opencodeChat.autoStartServer": {
           "type": "boolean",
           "default": true,
-          "description": "Start the local OpenCode server automatically when it is not running (loopback URLs only)."
+          "description": "Start a per-window OpenCode server automatically when it is not running (loopback URLs only). Each workspace folder gets its own server on a port derived from its path, so multiple VS Code windows can run independent servers."
         },
         "opencodeChat.workspaceFilter": {
           "type": "boolean",
