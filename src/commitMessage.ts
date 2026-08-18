@@ -19,7 +19,7 @@ const COMMIT_INSTRUCTION =
 /** Runs git with the given args in `cwd`. No shell involved — args are passed verbatim. */
 function runGit(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
+    execFile('git', args, { cwd, maxBuffer: 256 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       if (error !== null) {
         if (error.code === 'ENOENT') {
           reject(new Error('git executable not found'));

@@ -196,12 +196,18 @@ export class SessionManager {
     if (anchors === undefined) {
       return topLevel;
     }
-    const roots = anchors.map((anchor) => anchor.replace(/[\\/]+$/, ''));
+    // Windows (and default macOS) filesystems are case-insensitive, and the
+    // server's session.directory can carry different casing (or separators)
+    // than VS Code's fsPath. Compare folded paths there, or every session is
+    // filtered out and the active session gets dropped mid-conversation.
+    const fold = (p: string): string => {
+      const normalized = p.replace(/\\/g, '/').replace(/\/+$/, '');
+      return process.platform === 'win32' || process.platform === 'darwin' ? normalized.toLowerCase() : normalized;
+    };
+    const roots = anchors.map(fold);
     return topLevel.filter((session) => {
-      const dir = session.directory;
-      return roots.some(
-        (root) => dir === root || dir.startsWith(root + '/') || dir.startsWith(root + '\\'),
-      );
+      const dir = fold(session.directory);
+      return roots.some((root) => dir === root || dir.startsWith(root + '/'));
     });
   }
 }

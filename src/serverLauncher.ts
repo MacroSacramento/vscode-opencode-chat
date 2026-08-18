@@ -45,13 +45,13 @@ async function resolveOpenCodeBinary(): Promise<string | undefined> {
 	}
 
 	// macOS: VS Code launched from Finder gets a minimal PATH; a login shell
-	// sources the user's profile and reveals the real PATH.
-	if (process.platform === 'darwin') {
-		for (const shell of ['zsh', 'bash']) {
-			const viaShell = await whichViaLoginShell(shell);
-			if (viaShell !== undefined) {
-				return viaShell;
-			}
+	// sources the user's profile and reveals the real PATH. Linux desktop
+	// launchers can be similarly limited, so try bash there too.
+	const loginShells = process.platform === 'darwin' ? ['zsh', 'bash'] : process.platform === 'linux' ? ['bash'] : [];
+	for (const shell of loginShells) {
+		const viaShell = await whichViaLoginShell(shell);
+		if (viaShell !== undefined) {
+			return viaShell;
 		}
 	}
 
@@ -68,7 +68,7 @@ async function which(name: string): Promise<string | undefined> {
 	const isWin = process.platform === 'win32';
 	const cmd = isWin ? 'where' : 'which';
 	try {
-		const { stdout } = await execFileAsync(cmd, [name], { timeout: 5000 });
+		const { stdout } = await execFileAsync(cmd, [name], { timeout: 5000, windowsHide: true });
 		const lines = stdout
 			.split(/\r?\n/)
 			.map((line) => line.trim())
@@ -85,7 +85,7 @@ async function which(name: string): Promise<string | undefined> {
 
 async function whichViaLoginShell(shell: string): Promise<string | undefined> {
 	try {
-		const { stdout } = await execFileAsync(shell, ['-l', '-c', 'command -v opencode'], { timeout: 5000 });
+		const { stdout } = await execFileAsync(shell, ['-l', '-c', 'command -v opencode'], { timeout: 5000, windowsHide: true });
 		const line = stdout.trim();
 		return line.length > 0 ? line : undefined;
 	} catch {
@@ -112,7 +112,7 @@ function commonLocations(): string[] {
 async function npmGlobalBin(): Promise<string | undefined> {
 	try {
 		const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-		const { stdout } = await execFileAsync(npmCmd, ['prefix', '-g'], { timeout: 5000 });
+		const { stdout } = await execFileAsync(npmCmd, ['prefix', '-g'], { timeout: 5000, windowsHide: true });
 		const prefix = stdout.trim();
 		if (prefix.length === 0) {
 			return undefined;
@@ -192,9 +192,11 @@ export async function launchServer(serverUrl: string, log: (message: string) => 
 		}
 
 		// npm installs `opencode.cmd` shims on Windows; `spawn()` can't run
-		// those directly, so route them through cmd.exe.
+		// those directly, so route them through cmd.exe. `windowsHide` keeps
+		// the detached server (and its cmd.exe wrapper) from opening a console
+		// window on Windows.
 		const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(binary);
-		const child = spawn(binary, args, { detached: true, stdio: 'ignore', cwd, shell: needsShell });
+		const child = spawn(binary, args, { detached: true, stdio: 'ignore', cwd, shell: needsShell, windowsHide: true });
 		serverProcess = child;
 		child.unref();
 

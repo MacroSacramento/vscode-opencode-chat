@@ -34,7 +34,10 @@ async function verifyServerDirectory(log: (message: string) => void): Promise<vo
 	try {
 		const res = await getClient().path.get();
 		const serverDir = res.data?.directory;
-		const normalize = (p: string): string => p.replace(/[\\/]+$/, '');
+		const normalize = (p: string): string => {
+			const trimmed = p.replace(/\\/g, '/').replace(/\/+$/, '');
+			return process.platform === 'win32' || process.platform === 'darwin' ? trimmed.toLowerCase() : trimmed;
+		};
 		if (serverDir !== undefined && normalize(serverDir) !== normalize(folder.uri.fsPath)) {
 			log(`Warning: server at ${getServerUrl()} is rooted at ${serverDir}, not ${folder.uri.fsPath}. The port may be shared with another project's server.`);
 		}
