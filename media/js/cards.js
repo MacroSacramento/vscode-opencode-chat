@@ -1,5 +1,6 @@
 import { state } from './state.js';
-import { post } from './utils.js';
+import { post, scrollToBottom } from './utils.js';
+import { buildMetaChip, wrapChips } from './parts.js';
 
 // ── Permission prompts ──────────────────────────────────────────────────
 
@@ -77,6 +78,11 @@ export function replyPermission(reply) {
 
 const QUESTION_MARKS = { on: '\u25C9', off: '\u25EF' }; // ◉ / ◯ (radio)
 const QUESTION_CHECKS = { on: '\u2611', off: '\u2610' }; // ☑ / ☐ (checkbox)
+
+// Paging state: which question-block is currently shown. All blocks stay in
+// the DOM (hidden ones included) so selection state and `sendQuestion()`'s
+// answer collection keep working across Back/Next navigation.
+let currentQuestionIndex = 0;
 
 export function buildQuestionOption(q, opt) {
   const row = document.createElement('button');
@@ -159,6 +165,14 @@ export function updateQuestionSendState() {
 export function showQuestionCard(request) {
   state.pendingQuestion = request;
   const card = state.questionCard;
+  const questions = request.questions || [];
+
+  // Guard: nothing to ask, don't render the card.
+  if (questions.length === 0) {
+    hideQuestionCard();
+    return;
+  }
+
   card.textContent = '';
 
   const head = document.createElement('div');
@@ -166,7 +180,8 @@ export function showQuestionCard(request) {
   head.textContent = 'OpenCode asks';
   card.appendChild(head);
 
-  (request.questions || []).forEach(function (q, qIndex) {
+  const blocks = [];
+  questions.forEach(function (q, qIndex) {
     const block = document.createElement('div');
     block.className = 'question-block';
     block.dataset.qIndex = String(qIndex);
@@ -206,10 +221,36 @@ export function showQuestionCard(request) {
     }
 
     card.appendChild(block);
+    blocks.push(block);
   });
 
   const footer = document.createElement('div');
   footer.className = 'question-footer';
+
+  const pager = document.createElement('div');
+  pager.className = 'question-pager';
+  const back = document.createElement('button');
+  back.className = 'question-btn back';
+  back.type = 'button';
+  back.textContent = 'Back';
+  back.addEventListener('click', function () {
+    gotoQuestion(currentQuestionIndex - 1);
+  });
+  const progress = document.createElement('span');
+  progress.className = 'question-progress';
+  const next = document.createElement('button');
+  next.className = 'question-btn next';
+  next.type = 'button';
+  next.textContent = 'Next';
+  next.addEventListener('click', function () {
+    gotoQuestion(currentQuestionIndex + 1);
+  });
+  pager.appendChild(back);
+  pager.appendChild(progress);
+  pager.appendChild(next);
+
+  const actions = document.createElement('div');
+  actions.className = 'question-actions';
   const dismiss = document.createElement('button');
   dismiss.className = 'question-btn dismiss';
   dismiss.type = 'button';
@@ -221,13 +262,85 @@ export function showQuestionCard(request) {
   send.textContent = 'Send';
   send.disabled = true;
   send.addEventListener('click', sendQuestion);
-  footer.appendChild(dismiss);
-  footer.appendChild(send);
+  actions.appendChild(dismiss);
+  actions.appendChild(send);
+
+  footer.appendChild(pager);
+  footer.appendChild(actions);
   card.appendChild(footer);
 
+  // Paging keyboard (ArrowLeft/ArrowRight) — attach once per card element.
+  // Escape/Enter stay handled by app.js's existing keydown listener.
+  if (!card.dataset.pagerKeys) {
+    card.dataset.pagerKeys = '1';
+    card.addEventListener('keydown', function (e) {
+      if (card.hidden) {
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        gotoQuestion(currentQuestionIndex - 1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        gotoQuestion(currentQuestionIndex + 1);
+      }
+    });
+  }
+
+  currentQuestionIndex = 0;
+  updateQuestionPager(blocks);
   card.hidden = false;
   card.focus();
   updateQuestionSendState();
+}
+
+function gotoQuestion(index) {
+  const card = state.questionCard;
+  const blocks = Array.prototype.slice.call(card.querySelectorAll('.question-block'));
+  if (index < 0 || index >= blocks.length) {
+    return;
+  }
+  currentQuestionIndex = index;
+  updateQuestionPager(blocks);
+  // Move focus to the newly shown block so keyboard users aren't stranded.
+  const block = blocks[index];
+  const focusable = block.querySelector('.question-option') || block.querySelector('.question-custom');
+  if (focusable) {
+    focusable.focus();
+  }
+}
+
+function updateQuestionPager(blocks) {
+  const card = state.questionCard;
+  const total = blocks.length;
+  const pager = card.querySelector('.question-pager');
+  const actions = card.querySelector('.question-actions');
+  if (!pager) {
+    return;
+  }
+  // Single question: no pager, just Dismiss + Send.
+  if (total <= 1) {
+    pager.hidden = true;
+    if (actions) {
+      actions.hidden = false;
+    }
+    return;
+  }
+  pager.hidden = false;
+  const back = card.querySelector('.question-btn.back');
+  const next = card.querySelector('.question-btn.next');
+  const progress = card.querySelector('.question-progress');
+  back.disabled = currentQuestionIndex === 0;
+  // Last question: hide Next — Send is the forward action.
+  next.hidden = currentQuestionIndex === total - 1;
+  progress.textContent = (currentQuestionIndex + 1) + ' / ' + total;
+  // Dismiss + Send appear only on the last question.
+  if (actions) {
+    actions.hidden = currentQuestionIndex !== total - 1;
+  }
+  blocks.forEach(function (block, i) {
+    block.hidden = i !== currentQuestionIndex;
+  });
 }
 
 export function hideQuestionCard() {
@@ -271,9 +384,27 @@ export function sendQuestion() {
     version: req.version,
     answers: answers,
   });
+  appendAnsweredNote(req.questions.length);
   // Optimistic: the server's question.replied event (or a failed reply
   // surfacing as a toast) catches the fall-through.
   hideQuestionCard();
+}
+
+// Transient in-thread note that the user answered the question card. It is
+// NOT persisted: `session.idle` triggers a full history reload that rebuilds
+// the conversation from server state, which won't include this note. That's
+// intentional — it only bridges the moment between answering and the next
+// authoritative render. Only shown on actual answers, not on dismiss.
+function appendAnsweredNote(count) {
+  if (!state.conversation) {
+    return;
+  }
+  const label = count > 1 ? 'Answered ' + count + ' questions' : 'Answered question';
+  const note = document.createElement('div');
+  note.className = 'answered-note';
+  note.appendChild(wrapChips(buildMetaChip(label, 'answered-chip')));
+  state.conversation.appendChild(note);
+  scrollToBottom();
 }
 
 export function dismissQuestion() {

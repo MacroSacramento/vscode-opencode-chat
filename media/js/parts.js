@@ -18,26 +18,156 @@ function toolGlyph(stateLabel) {
   }
 }
 
+// Field priority for turning a tool's `state.input` into a short one-liner
+// shown in the chip header area. The runtime tool parts carry no top-level
+// `title`, so this is what the user sees at a glance.
+const TOOL_SUMMARY_FIELDS = ['command', 'cmd', 'query', 'pattern', 'prompt', 'text', 'url', 'path', 'filePath', 'message', 'description'];
+
+function summarizeToolInput(input) {
+  if (input === undefined || input === null) {
+    return '';
+  }
+  if (typeof input === 'string') {
+    return input;
+  }
+  if (typeof input !== 'object') {
+    return String(input);
+  }
+  // grep-style: pattern + path together → "pattern · path".
+  if (typeof input.pattern === 'string' && input.pattern && typeof input.path === 'string' && input.path) {
+    return input.pattern + ' \u00B7 ' + input.path;
+  }
+  for (let i = 0; i < TOOL_SUMMARY_FIELDS.length; i += 1) {
+    const val = input[TOOL_SUMMARY_FIELDS[i]];
+    if (typeof val === 'string' && val) {
+      return val;
+    }
+  }
+  // Fallback: compact single-line JSON, truncated.
+  let text;
+  try {
+    text = JSON.stringify(input);
+  } catch (e) {
+    text = String(input);
+  }
+  if (text.length > 200) {
+    text = text.slice(0, 200) + '\u2026';
+  }
+  return text;
+}
+
 export function buildToolChip(part) {
-  const chip = document.createElement('span');
+  const stateLabel = part.state && part.state.status ? part.state.status : 'pending';
+  const chip = document.createElement('div');
   chip.className = 'tool-chip';
-  chip.dataset.state = part.state && part.state.status ? part.state.status : 'pending';
-  const glyph = toolGlyph(chip.dataset.state);
+  chip.dataset.state = stateLabel;
+
+  const head = document.createElement('button');
+  head.className = 'tool-chip-head';
+  head.type = 'button';
+  head.setAttribute('aria-expanded', 'false');
+
+  const glyph = toolGlyph(stateLabel);
   const glyphEl = document.createElement('span');
   glyphEl.className = 'tool-glyph' + (glyph.spin ? ' spin' : '');
   glyphEl.textContent = glyph.text;
+
   const name = document.createElement('span');
   name.className = 'tool-name';
-  name.textContent = (part.title || part.tool || 'tool').trim();
-  if (part.title && part.title !== part.tool) {
-    name.textContent = part.tool + ' · ' + part.title;
+  const tool = String(part.tool || 'tool').trim();
+  // Title lives on the state object, not the part (SDK ToolPart shape).
+  const title = part.state && part.state.title ? String(part.state.title).trim() : '';
+  name.textContent = title && title !== tool ? tool + ' \u00B7 ' + title : tool;
+
+  const chevron = document.createElement('span');
+  chevron.className = 'tool-chevron';
+  chevron.textContent = '\u25B8'; // ▸
+
+  head.appendChild(glyphEl);
+  head.appendChild(name);
+  head.appendChild(chevron);
+  chip.appendChild(head);
+
+  // Always-visible one-line summary of the tool call (e.g. the bash command),
+  // so the user sees what the tool did without expanding. textContent only.
+  const summary = summarizeToolInput(part.state && part.state.input);
+  if (summary) {
+    const summaryEl = document.createElement('div');
+    summaryEl.className = 'tool-summary';
+    summaryEl.textContent = summary;
+    summaryEl.title = summary;
+    chip.appendChild(summaryEl);
   }
-  chip.appendChild(glyphEl);
-  chip.appendChild(name);
+
   if (part.state && part.state.error) {
     chip.title = part.state.error;
   }
+
+  const detail = document.createElement('div');
+  detail.className = 'tool-detail';
+  detail.hidden = true;
+
+  // Input: pretty-printed JSON, textContent only (never innerHTML).
+  const input = part.state && part.state.input;
+  if (input !== undefined && input !== null) {
+    let inputText;
+    if (typeof input === 'object') {
+      try {
+        inputText = JSON.stringify(input, null, 2);
+      } catch (e) {
+        inputText = String(input);
+      }
+    } else {
+      inputText = String(input);
+    }
+    if (inputText) {
+      detail.appendChild(buildToolSection('Input', 'tool-input', inputText));
+    }
+  }
+
+  // Output: only meaningful when the tool completed.
+  if (stateLabel === 'completed') {
+    const output = part.state && typeof part.state.output === 'string' ? part.state.output : '';
+    if (output) {
+      const MAX_OUTPUT = 2000;
+      const shown = output.length > MAX_OUTPUT ? output.slice(0, MAX_OUTPUT) + '\n\u2026 (truncated)' : output;
+      detail.appendChild(buildToolSection('Output', 'tool-output', shown));
+    }
+  }
+
+  // Error: surfaced when the tool failed.
+  if (stateLabel === 'error') {
+    const err = part.state && part.state.error;
+    if (err) {
+      detail.appendChild(buildToolSection('Error', 'tool-error', String(err)));
+    }
+  }
+
+  if (detail.childNodes.length > 0) {
+    chip.appendChild(detail);
+    head.addEventListener('click', function () {
+      const open = !detail.hidden;
+      detail.hidden = open;
+      head.setAttribute('aria-expanded', open ? 'false' : 'true');
+    });
+  } else {
+    // Nothing to show: hide the chevron so the chip reads as inert.
+    chevron.hidden = true;
+  }
   return chip;
+}
+
+function buildToolSection(label, className, text) {
+  const wrap = document.createElement('div');
+  const labelEl = document.createElement('div');
+  labelEl.className = 'tool-section-label';
+  labelEl.textContent = label;
+  const pre = document.createElement('pre');
+  pre.className = className;
+  pre.textContent = text;
+  wrap.appendChild(labelEl);
+  wrap.appendChild(pre);
+  return wrap;
 }
 
 // Shared builder for quiet meta chips (step/patch/agent/subtask/retry/
