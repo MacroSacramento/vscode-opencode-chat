@@ -138,6 +138,24 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
     await this.sessions.refresh();
   }
 
+  /**
+   * Syncs the webview after the connection transitions to connected (initial
+   * connect, auto-start, reconnect, or stream-failure recovery). Without this,
+   * the sidebar stays empty until the first prompt: `ready` usually fires while
+   * the server is still connecting, and the `server.connected` SSE event does
+   * not replay for an already-running server — so nothing else re-triggers a
+   * session refresh.
+   */
+  async onConnected(): Promise<void> {
+    this.armEventStream();
+    await this.sessions.refresh();
+    if (this.activeSessionId !== undefined && isConnected()) {
+      await this.history.loadHistory(this.activeSessionId);
+      this.post({ type: 'busy', sessionId: this.activeSessionId, busy: this.busySessions.get(this.activeSessionId) === true });
+      void this.meta.syncSessionMeta(this.activeSessionId);
+    }
+  }
+
   /** Posts editor context text for the webview to insert into the composer. */
   insertContext(text: string, label: string): void {
     this.post({ type: 'insertContext', text, label });

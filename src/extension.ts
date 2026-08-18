@@ -58,9 +58,17 @@ export function activate(context: vscode.ExtensionContext): void {
 	statusBarItem.text = 'OpenCode: disconnected';
 	statusBarItem.show();
 
+	// Set once the chat view provider is registered (created below), so the
+	// connect transition can push an immediate session/history sync into the
+	// webview instead of waiting for a user prompt or the 10s arm timer.
+	let notifyProviderConnected: (() => void) | undefined;
+
 	const onStateChange = (connected: boolean): void => {
 		statusBarItem.text = connected ? 'OpenCode: connected' : 'OpenCode: disconnected';
 		log(connected ? 'Connected to OpenCode server' : 'Disconnected from OpenCode server');
+		if (connected) {
+			notifyProviderConnected?.();
+		}
 	};
 
 	const init = (): void => {
@@ -138,6 +146,9 @@ export function activate(context: vscode.ExtensionContext): void {
 	void connectAndClear();
 
 	const chatViewProvider = registerChatViewProvider(context, log);
+	notifyProviderConnected = (): void => {
+		void chatViewProvider.onConnected();
+	};
 
 	// Inline completion (ghost text) — bypasses the OpenCode server entirely.
 	registerCompletion(context);
