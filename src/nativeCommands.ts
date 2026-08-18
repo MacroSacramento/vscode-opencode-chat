@@ -1,22 +1,8 @@
 import { getClient } from './opencodeClient';
-import type { SnapshotFileDiff } from '@opencode-ai/sdk/dist/v2/client';
+import { reviewChanges } from './reviewChanges';
 import type { ProviderContext } from './webview/types';
 import type { HistoryService } from './sessions/history';
 import type { SessionManager } from './sessions/manager';
-
-/** Renders a short, readable summary of a session diff (capped at 2000 chars). */
-export function buildDiffText(diffs: Array<SnapshotFileDiff>): string {
-  if (diffs.length === 0) {
-    return 'No changes';
-  }
-  const sections = diffs.map((d) => {
-    const header = `${d.file ?? '(unknown)'} (${d.additions}+/${d.deletions}-)`;
-    const patch = d.patch === undefined ? '' : d.patch.trim();
-    return patch === '' ? header : `${header}\n${patch}`;
-  });
-  const joined = sections.join('\n\n---\n\n');
-  return joined.length > 2000 ? `${joined.slice(0, 2000)}…` : joined;
-}
 
 /**
  * Executes a native session command (undo/redo/diff/fork/share/abort/compact)
@@ -55,9 +41,7 @@ export async function runNativeCommand(
         break;
       }
       case 'diff': {
-        const res = await getClient().session.diff({ sessionID: sessionId });
-        const text = buildDiffText(res.data ?? []);
-        ctx.post({ type: 'nativeResult', sessionId, text });
+        await reviewChanges(sessionId);
         break;
       }
       case 'fork': {

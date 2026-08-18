@@ -16,7 +16,7 @@ export const NATIVE_COMMANDS = [
   { name: 'help', description: 'List all commands', local: true },
   { name: 'undo', description: 'Revert the last assistant turn', local: false },
   { name: 'redo', description: 'Restore reverted turns', local: false },
-  { name: 'diff', description: 'Show session file changes', local: false },
+  { name: 'diff', description: 'Review session file changes', local: false },
   { name: 'fork', description: 'Fork this session', local: false },
   { name: 'share', description: 'Create a share link', local: false },
   { name: 'abort', description: 'Stop the current response', local: false },
