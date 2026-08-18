@@ -960,6 +960,9 @@ code {
 .composer textarea::placeholder {
   color: var(--vscode-input-placeholderForeground, var(--oc-text-subtle));
   opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .composer textarea:disabled {

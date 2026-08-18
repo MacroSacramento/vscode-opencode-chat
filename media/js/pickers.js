@@ -43,7 +43,12 @@ export function updateThinkingToggle() {
 
 export function toggleThinking() {
   state.showThinking = !state.showThinking;
-  localStorage.setItem('opencodeChat.showThinking', state.showThinking ? '1' : '0');
+  try {
+    localStorage.setItem('opencodeChat.showThinking', state.showThinking ? '1' : '0');
+  } catch (e) {
+    // Storage can be unavailable in some webview contexts — the toggle must
+    // still work; persistence is best-effort only.
+  }
   updateThinkingToggle();
   // Completed reasoning details: open when the flag is on, collapsed when
   // off (existing default). Applied live so no reload is needed.

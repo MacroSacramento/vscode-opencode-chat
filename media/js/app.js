@@ -144,7 +144,9 @@ function route(msg) {
       }
       break;
     case 'permission':
-      if (msg.request && msg.request.sessionID === state.activeSessionId) {
+      // The host already gates on the active session (or its subagent
+      // sessions); the webview shows whatever card arrives.
+      if (msg.request) {
         showPermissionCard(msg.request);
       }
       break;
@@ -154,7 +156,7 @@ function route(msg) {
       }
       break;
     case 'question':
-      if (msg.request && msg.request.sessionID === state.activeSessionId) {
+      if (msg.request) {
         showQuestionCard(msg.request);
       }
       break;
@@ -216,8 +218,16 @@ function init() {
   state.helpOverlay = $('helpOverlay');
   state.helpList = $('helpList');
 
-  // Restore the thinking preference; off by default.
-  state.showThinking = localStorage.getItem('opencodeChat.showThinking') === '1';
+  // Restore the thinking preference; off by default. Storage can be
+  // unavailable in some webview contexts — fall back to the default rather
+  // than letting a read failure kill the whole webview.
+  let showThinking = false;
+  try {
+    showThinking = localStorage.getItem('opencodeChat.showThinking') === '1';
+  } catch (e) {
+    showThinking = false;
+  }
+  state.showThinking = showThinking;
   updateThinkingToggle();
 
   window.addEventListener('message', function (e) {

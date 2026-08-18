@@ -102,6 +102,10 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
   private readonly history: HistoryService;
   private readonly meta: MetaState;
   private readonly questionLifecycle: QuestionLifecycle;
+  // partID → part type, learned from `message.part.updated` snapshots so
+  // `message.part.delta` events (which carry no type) can be routed to the
+  // webview's text vs. reasoning accumulators.
+  private readonly partTypes = new Map<string, string>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -511,6 +515,9 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
         if (sessionID === undefined || sessionID !== this.activeSessionId || part === undefined) {
           break;
         }
+        // Remember the part type so later `message.part.delta` events (which
+        // carry only a partID) can be routed to the right accumulator.
+        this.partTypes.set(part.id, part.type);
         // A part without a messageID can't be routed to a message — skip it.
         const messageID = part.messageID;
         if (!messageID) {
@@ -531,6 +538,40 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
             replace: delta === undefined,
           });
         }
+        break;
+      }
+      case 'message.part.delta': {
+        // Incremental stream deltas (legacy `/event` shape): flat properties
+        // with a partID but no part type — resolve it from the map populated
+        // by `message.part.updated` snapshots above.
+        const messageID = p.messageID ?? p.data?.messageID;
+        const partID = p.partID ?? p.data?.partID;
+        const field = p.field ?? p.data?.field;
+        const delta = typeof p.delta === 'string' ? p.delta : p.data?.delta;
+        if (
+          sessionID === undefined ||
+          sessionID !== this.activeSessionId ||
+          typeof messageID !== 'string' ||
+          typeof partID !== 'string' ||
+          field !== 'text' ||
+          typeof delta !== 'string'
+        ) {
+          break;
+        }
+        const partType = this.partTypes.get(partID);
+        if (partType !== 'text' && partType !== 'reasoning') {
+          // Unknown part (e.g. mid-stream connect): the fragment-end
+          // `message.part.updated` snapshot still renders the full text.
+          break;
+        }
+        this.post({
+          type: 'delta',
+          sessionId: sessionID,
+          messageId: messageID,
+          partType,
+          text: delta,
+          replace: false,
+        });
         break;
       }
       case 'message.updated': {
@@ -586,7 +627,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
       case 'question.v2.replied':
       case 'question.rejected':
       case 'question.v2.rejected':
-        this.questionLifecycle.handleEvent(event.type, p);
+        void this.questionLifecycle.handleEvent(event.type, p);
         break;
       default:
         break;

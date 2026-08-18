@@ -62,9 +62,10 @@ export class QuestionLifecycle {
    * permission.v2.asked, permission.replied/v2, question.asked/v2 and
    * question.replied/v2/rejected/v2. Pending questions are tracked for every
    * session regardless of active status so a later prompt can auto-reject
-   * them; posts to the webview are gated on the active session.
+   * them; posts to the webview are gated on the active session or one of its
+   * descendant (subagent) sessions.
    */
-  handleEvent(type: string, properties: any): void {
+  async handleEvent(type: string, properties: any): Promise<void> {
     const p = properties;
     // Tolerate both `{ sessionID }` (contract) and `{ data: { sessionID } }`
     // (raw SDK event) shapes.
@@ -75,7 +76,10 @@ export class QuestionLifecycle {
         const id = typeof p.id === 'string' ? p.id : undefined;
         const permission = typeof p.permission === 'string' ? p.permission : undefined;
         const patterns = Array.isArray(p.patterns) ? p.patterns.filter((x: unknown): x is string => typeof x === 'string') : [];
-        if (sessionID === undefined || sessionID !== this.ctx.getActiveSessionId() || id === undefined || permission === undefined) {
+        if (sessionID === undefined || id === undefined || permission === undefined) {
+          break;
+        }
+        if (!(await this.isRelevantSession(sessionID))) {
           break;
         }
         this.ctx.post({ type: 'permission', request: { version: 'v1', id, sessionID, permission, patterns } });
@@ -85,7 +89,10 @@ export class QuestionLifecycle {
         const id = typeof p.id === 'string' ? p.id : undefined;
         const action = typeof p.action === 'string' ? p.action : undefined;
         const resources = Array.isArray(p.resources) ? p.resources.filter((x: unknown): x is string => typeof x === 'string') : [];
-        if (sessionID === undefined || sessionID !== this.ctx.getActiveSessionId() || id === undefined || action === undefined) {
+        if (sessionID === undefined || id === undefined || action === undefined) {
+          break;
+        }
+        if (!(await this.isRelevantSession(sessionID))) {
           break;
         }
         this.ctx.post({ type: 'permission', request: { version: 'v2', id, sessionID, action, resources } });
@@ -94,7 +101,7 @@ export class QuestionLifecycle {
       case 'permission.replied':
       case 'permission.v2.replied': {
         const requestID = typeof p.requestID === 'string' ? p.requestID : undefined;
-        if (sessionID === undefined || sessionID !== this.ctx.getActiveSessionId() || requestID === undefined) {
+        if (sessionID === undefined || requestID === undefined) {
           break;
         }
         this.ctx.post({ type: 'permissionResolved', sessionID, requestID });
@@ -110,7 +117,7 @@ export class QuestionLifecycle {
         // Track the pending question regardless of active-session status so a
         // new prompt can auto-reject it (prevents session wedging).
         this.pendingQuestions.set(sessionID, { id, version: type === 'question.v2.asked' ? 'v2' : 'v1' });
-        if (sessionID !== this.ctx.getActiveSessionId()) {
+        if (!(await this.isRelevantSession(sessionID))) {
           break;
         }
         const questions = toQuestionEntries(rawQuestions);
@@ -140,15 +147,44 @@ export class QuestionLifecycle {
         if (pending !== undefined && pending.id === requestID) {
           this.pendingQuestions.delete(sessionID);
         }
-        if (sessionID !== this.ctx.getActiveSessionId()) {
-          break;
-        }
         this.ctx.post({ type: 'questionResolved', sessionID, requestID });
         break;
       }
       default:
         break;
     }
+  }
+
+  /**
+   * Whether a question/permission event for `sessionId` should surface in the
+   * webview: the active session or any of its descendant (subagent) sessions.
+   * Subagent questions carry the subagent's sessionID, so gating on the active
+   * session alone silently drops them and the agent hangs waiting for an
+   * answer. Walks the parent chain up from the event's session to the active
+   * session. Fails open (treats the session as relevant) when the lookup
+   * errors, so a transient API failure can't strand the agent.
+   */
+  private async isRelevantSession(sessionId: string): Promise<boolean> {
+    const active = this.ctx.getActiveSessionId();
+    if (active === undefined || sessionId === active) {
+      return true;
+    }
+    const visited = new Set<string>();
+    let current: string | undefined = sessionId;
+    while (current !== undefined && !visited.has(current)) {
+      visited.add(current);
+      if (current === active) {
+        return true;
+      }
+      try {
+        // Annotated to break the SDK's recursive RequestResult inference.
+        const res: { data?: { parentID?: string } } = await getClient().session.get({ sessionID: current });
+        current = res.data?.parentID;
+      } catch {
+        return true; // fail open
+      }
+    }
+    return false;
   }
 
   /**
