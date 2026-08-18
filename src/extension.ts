@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { connect, disposeOpenCode, getClient, getServerUrl, initOpenCode, isConnected } from './opencodeClient';
 import { stopEventStream } from './events';
 import { registerChatViewProvider } from './chatViewProvider';
-import { launchServer, stopServer } from './serverLauncher';
+import { findOpenCodeBinary, launchServer, stopServer } from './serverLauncher';
 import { registerCompletion } from './completionProvider';
 import { registerCommitMessage } from './commitMessage';
 import { resolveServerUrl } from './serverUrl';
@@ -11,6 +11,10 @@ const CONNECT_RETRY_MS = 15000;
 
 /** Server URL we already attempted to auto-start, so each URL spawns once per session. */
 let spawnAttemptedForUrl: string | undefined;
+
+/** Set once the opencode binary can't be found, so we stop re-spawning. */
+let binaryMissing = false;
+let binaryMissingWarned = false;
 
 function shouldAutoStart(): boolean {
 	return vscode.workspace.getConfiguration('opencodeChat').get<boolean>('autoStartServer') ?? true;
@@ -72,20 +76,38 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 			if (isConnected()) {
 				await verifyServerDirectory(log);
+				// A live server means the binary exists — clear any earlier
+				// "binary not found" state so auto-start can resume.
+				binaryMissing = false;
+				binaryMissingWarned = false;
 			}
-			if (!isConnected() && shouldAutoStart() && spawnAttemptedForUrl !== getServerUrl()) {
+			if (!isConnected() && shouldAutoStart() && !binaryMissing && spawnAttemptedForUrl !== getServerUrl()) {
 				spawnAttemptedForUrl = getServerUrl();
 				// Anchor the server to the open workspace folder so sessions are
 				// created in the project VS Code has open (the filter in
 				// SessionManager relies on session.directory matching it).
 				const workspaceCwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-				launchServer(getServerUrl(), log, workspaceCwd);
-				await new Promise((resolve) => setTimeout(resolve, 2000));
-				if (!isConnected()) {
-					await connect();
-				}
-				if (isConnected()) {
-					await verifyServerDirectory(log);
+				const result = await launchServer(getServerUrl(), log, workspaceCwd);
+				if (result.ok) {
+					await new Promise((resolve) => setTimeout(resolve, 2000));
+					if (!isConnected()) {
+						await connect();
+					}
+					if (isConnected()) {
+						await verifyServerDirectory(log);
+					}
+				} else if (result.reason === 'binary-not-found') {
+					// Stop re-spawning; surface the problem once instead of
+					// retrying forever. Health checks continue so a manually
+					// started server (or a later install) still connects.
+					binaryMissing = true;
+					if (!binaryMissingWarned) {
+						binaryMissingWarned = true;
+						statusBarItem.text = 'OpenCode: binary not found';
+						void vscode.window.showErrorMessage(
+							'OpenCode: opencode binary not found. Install opencode or start the server manually.'
+						);
+					}
 				}
 			}
 		} catch (err) {
@@ -98,7 +120,15 @@ export function activate(context: vscode.ExtensionContext): void {
 			// The previous auto-start may have exited (e.g. another window
 			// closed and killed a shared server) — allow a fresh spawn attempt.
 			spawnAttemptedForUrl = undefined;
-			void connectAndClear();
+			void (async () => {
+				// Recover if the binary appeared since the last check (e.g. the
+				// user installed opencode while the extension was running).
+				if (binaryMissing && (await findOpenCodeBinary()) !== undefined) {
+					binaryMissing = false;
+					binaryMissingWarned = false;
+				}
+				await connectAndClear();
+			})();
 		}
 	}, CONNECT_RETRY_MS);
 
@@ -123,6 +153,8 @@ export function activate(context: vscode.ExtensionContext): void {
 		}
 		log(`${reason} — reconnecting (${getServerUrl()} -> ${nextUrl})`);
 		spawnAttemptedForUrl = undefined;
+		binaryMissing = false;
+		binaryMissingWarned = false;
 		stopEventStream();
 		disposeOpenCode();
 		// The old URL's server belongs to this window — stop it when moving on.
