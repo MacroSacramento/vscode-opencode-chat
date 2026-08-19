@@ -67,6 +67,25 @@ export function maybeScrollBottom() {
   }
 }
 
+// Container-aware scroll helpers for the multi-pane grid: messages for a
+// non-focused pane must scroll that pane's own conversation, not the focused
+// one. The plain scrollToBottom/maybeScrollBottom above stay as focused-pane
+// wrappers for the composer/cards/pickers paths.
+export function scrollToBottomIn(conv) {
+  if (conv) {
+    conv.scrollTop = conv.scrollHeight;
+  }
+}
+
+export function maybeScrollBottomIn(conv) {
+  if (!conv) {
+    return;
+  }
+  if (conv.scrollHeight - conv.scrollTop - conv.clientHeight < 120) {
+    scrollToBottomIn(conv);
+  }
+}
+
 export function showProgress() {
   state.loading = true;
   state.progress.hidden = false;

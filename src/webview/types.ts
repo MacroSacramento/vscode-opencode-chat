@@ -8,14 +8,14 @@ import type { Message, Part } from '@opencode-ai/sdk/dist/v2/client';
  * host → webview: `connected`, `sessions`, `history`, `delta`, `message`,
  * `busy`, `sessionDeleted`, `catalog`, `sessionMeta`, `nativeResult`,
  * `subagents`, `files`, `permission`, `permissionResolved`, `question`,
- * `questionResolved`, `error`, `insertContext`
+ * `questionResolved`, `error`, `insertContext`, `chatLayout`
  *
  * webview → host: `ready`, `selectSession`, `prompt` (optional `files`:
  * workspace-relative posix paths, and `agent`: per-prompt override),
  * `newSession` (same optional `files`/`agent`), `deleteSession`,
  * `refreshSessions`, `executeCommand`, `nativeCommand`, `setAgent`, `setModel`,
  * `getCatalog`, `getFiles`, `setSubagentsVisible`, `permissionReply`,
- * `questionReply`
+ * `questionReply`, `setChatLayout`
  */
 
 /**
@@ -33,6 +33,43 @@ export interface SessionSummary {
 export interface WorkspaceFile {
   path: string;
   name: string;
+}
+
+export type ChatOrientation = 'horizontal' | 'vertical';
+
+/**
+ * A group of session panes sharing one pane DOM. `sessionIds` order is the tab
+ * order (left→right / top→bottom); the webview shows only the focused tab's
+ * pane but keeps every pane mounted. Groups are the only nodes that carry an
+ * `id` — splits are purely structural.
+ */
+export interface ChatGroup {
+  type: 'group';
+  id: string;
+  sessionIds: string[];
+}
+
+/**
+ * A structural split: children laid out side-by-side ('horizontal') or stacked
+ * ('vertical'). Splits carry no id.
+ */
+export interface ChatSplit {
+  type: 'split';
+  orientation: ChatOrientation;
+  children: ChatLayoutNode[];
+}
+
+export type ChatLayoutNode = ChatGroup | ChatSplit;
+
+/**
+ * The nested split-tree layout of open chat sessions (v2). The webview is the
+ * layout source of truth during a session; the host persists it and uses it to
+ * decide which sessions receive forwarded SSE events and history loads.
+ */
+export interface ChatLayout {
+  version: 2;
+  root: ChatLayoutNode | null;
+  focusedSessionId: string | null;
 }
 
 /**
@@ -101,6 +138,8 @@ export interface ProviderContext {
   post(msg: Record<string, unknown>): void;
   isConnected(): boolean;
   getActiveSessionId(): string | undefined;
+  getOpenSessionIds(): string[];
+  isPaneOpen(sessionId: string): boolean;
   get workspaceState(): vscode.Memento;
 }
 

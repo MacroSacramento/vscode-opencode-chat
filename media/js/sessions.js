@@ -1,9 +1,9 @@
 import { state } from './state.js';
 import { relativeTime, showProgress, hideProgress } from './utils.js';
-import { clearConversation } from './messages.js';
 import { hidePermissionCard, hideQuestionCard } from './cards.js';
 import { closeSlashPopup, updateComposerState } from './composer.js';
 import { closeAgentMenu, closeModelMenu, updateMetaBadges } from './pickers.js';
+import { setSessionTitle, syncEmptyStates, openSession, getPaneConversation } from './layout.js';
 
 // ── Session list ─────────────────────────────────────────────────────────
 
@@ -11,6 +11,8 @@ export function buildSessionRow(session, isSubagent) {
   const row = document.createElement('div');
   row.className = 'session-row' + (session.id === state.activeSessionId ? ' active' : '') + (isSubagent ? ' subagent-row' : '');
   row.dataset.sessionId = session.id;
+  // Drag source for the chat grid (layout.js wires the delegated handlers).
+  row.draggable = true;
 
   if (isSubagent) {
     const tag = document.createElement('span');
@@ -86,24 +88,26 @@ export function applySessions(msg) {
   renderSessionList();
 
   if (changed) {
-    clearConversation();
-    state.busy = false;
-    state.stopping = false;
-    state.stoppedStream = false;
-    state.agent = null;
-    state.model = null;
-    state.usage = null;
     state.subagents = [];
-    hidePermissionCard();
-    hideQuestionCard();
     setSubagentsToggle(false);
     closeSlashPopup();
     closeAgentMenu();
     closeModelMenu();
     updateMetaBadges();
   }
+  // Ensure the active session has a pane (e.g. on first load when the
+  // restored layout is empty) so its history isn't dropped by the routing
+  // gate. No-op when the pane already exists.
+  if (state.activeSessionId && !getPaneConversation(state.activeSessionId)) {
+    openSession(state.activeSessionId);
+  }
+  // Update pane titles from the session list (layout.js no-ops for sessions
+  // without panes).
+  state.sessions.forEach(function (s) {
+    setSessionTitle(s.id, s.title);
+  });
   updateSubagentsToggle();
-  updateEmptyStates();
+  syncEmptyStates();
   updateComposerState();
 }
 
@@ -111,25 +115,22 @@ export function removeSession(sessionId) {
   state.sessions = state.sessions.filter(function (s) {
     return s.id !== sessionId;
   });
-  if (state.activeSessionId === sessionId) {
-    state.activeSessionId = null;
-    state.busy = false;
-    state.stopping = false;
-    state.stoppedStream = false;
-    state.agent = null;
-    state.model = null;
-    state.usage = null;
-    state.subagents = [];
-    hidePermissionCard();
-    hideQuestionCard();
-    setSubagentsToggle(false);
-    clearConversation();
-    hideProgress();
-    updateMetaBadges();
-  }
+  // Clean up per-pane state for the removed session. Pane removal + focus
+  // repair is handled by layout.js handleSessionDeleted (runs first).
+  delete state.paneBusy[sessionId];
+  delete state.paneStopping[sessionId];
+  delete state.paneStoppedStream[sessionId];
+  delete state.panePendingAssistantId[sessionId];
+  delete state.panePendingUserEl[sessionId];
+  delete state.paneAgent[sessionId];
+  delete state.paneModel[sessionId];
+  delete state.paneUsage[sessionId];
+  delete state.paneSubagents[sessionId];
+  delete state.panePendingPermission[sessionId];
+  delete state.panePendingQuestion[sessionId];
   renderSessionList();
   updateSubagentsToggle();
-  updateEmptyStates();
+  syncEmptyStates();
   updateComposerState();
 }
 
@@ -149,14 +150,7 @@ export function applyConnected(connected) {
 }
 
 export function updateEmptyStates() {
-  const convEmpty = state.conversation.querySelectorAll('.message').length === 0;
-  let showNoSessions = false;
-  let showNoConv = false;
-  if (state.connected && state.sessions.length === 0) {
-    showNoSessions = true;
-  } else if (state.connected && !state.loading && state.activeSessionId !== null && convEmpty) {
-    showNoConv = true;
-  }
-  state.emptyNoSessions.hidden = !showNoSessions;
-  state.emptyConversation.hidden = !showNoConv;
+  // Empty-state coordination now lives in layout.js (grid hint, per-pane
+  // placeholders, and the absolute overlays all stay in sync there).
+  syncEmptyStates();
 }

@@ -4,7 +4,7 @@ import { getClient, getServerUrl, isConnected } from './opencodeClient';
 import { isEventStreamRunning, startEventStream } from './events';
 import type { Message, Part } from '@opencode-ai/sdk/dist/v2/client';
 import { toHistoryMessage } from './webview/types';
-import type { Handler, ProviderContext } from './webview/types';
+import type { ChatLayout, Handler, ProviderContext } from './webview/types';
 import { renderWebviewShell } from './webview/html';
 import { QuestionLifecycle } from './questions/lifecycle';
 import { SessionManager } from './sessions/manager';
@@ -115,6 +115,8 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
       post: (message) => this.post(message),
       isConnected: () => isConnected(),
       getActiveSessionId: () => this.sessions.getActiveSessionId(),
+      getOpenSessionIds: () => this.sessions.getOpenSessionIds(),
+      isPaneOpen: (sessionId) => this.sessions.isPaneOpen(sessionId),
       workspaceState: this.context.workspaceState,
     };
     this.sessions = new SessionManager(this.ctx);
@@ -149,10 +151,12 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
   async onConnected(): Promise<void> {
     this.armEventStream();
     await this.sessions.refresh();
-    if (this.activeSessionId !== undefined && isConnected()) {
-      await this.history.loadHistory(this.activeSessionId);
-      this.post({ type: 'busy', sessionId: this.activeSessionId, busy: this.busySessions.get(this.activeSessionId) === true });
-      void this.meta.syncSessionMeta(this.activeSessionId);
+    for (const sessionId of this.sessions.getOpenSessionIds()) {
+      if (isConnected()) {
+        await this.history.loadHistory(sessionId);
+        this.post({ type: 'busy', sessionId, busy: this.busySessions.get(sessionId) === true });
+        void this.meta.syncSessionMeta(sessionId);
+      }
     }
   }
 
@@ -223,13 +227,18 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
     ready: async () => {
       this.armEventStream();
       this.post({ type: 'connected', connected: isConnected() });
+      // Restore the persisted grid before history arrives so the webview can
+      // render panes first.
+      this.post({ type: 'chatLayout', layout: this.sessions.getLayout() });
       // Catalog load is async — fire it, don't block the ready handshake.
       void this.meta.loadCatalog();
       await this.sessions.refresh();
-      if (this.activeSessionId !== undefined && isConnected()) {
-        await this.history.loadHistory(this.activeSessionId);
-        this.post({ type: 'busy', sessionId: this.activeSessionId, busy: this.busySessions.get(this.activeSessionId) === true });
-        void this.meta.syncSessionMeta(this.activeSessionId);
+      for (const sessionId of this.sessions.getOpenSessionIds()) {
+        if (isConnected()) {
+          await this.history.loadHistory(sessionId);
+          this.post({ type: 'busy', sessionId, busy: this.busySessions.get(sessionId) === true });
+          void this.meta.syncSessionMeta(sessionId);
+        }
       }
     },
     selectSession: async (message) => {
@@ -242,6 +251,24 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
         await this.history.loadHistory(sessionId);
         this.post({ type: 'busy', sessionId, busy: this.busySessions.get(sessionId) === true });
         void this.meta.syncSessionMeta(sessionId);
+      }
+    },
+    setChatLayout: async (message) => {
+      const layout = message.layout;
+      if (!layout || typeof layout !== 'object') {
+        return;
+      }
+      const l = layout as Record<string, unknown>;
+      if (l.version !== 2 && !('root' in l)) {
+        return;
+      }
+      const newlyOpened = await this.sessions.applyLayout(layout as ChatLayout);
+      for (const sessionId of newlyOpened) {
+        if (isConnected()) {
+          await this.history.loadHistory(sessionId);
+          this.post({ type: 'busy', sessionId, busy: this.busySessions.get(sessionId) === true });
+          void this.meta.syncSessionMeta(sessionId);
+        }
       }
     },
     prompt: async (message) => {
@@ -267,8 +294,15 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
       const files = Array.isArray(message.files) ? message.files.filter((f): f is string => typeof f === 'string') : undefined;
       const agent = typeof message.agent === 'string' ? message.agent : undefined;
       const created = await this.sessions.create(prompt);
-      if (created !== undefined && prompt !== undefined && prompt.trim() !== '') {
-        await this.sendPrompt(created.id, prompt, files, agent);
+      if (created !== undefined) {
+        if (isConnected()) {
+          await this.history.loadHistory(created.id);
+          this.post({ type: 'busy', sessionId: created.id, busy: this.busySessions.get(created.id) === true });
+          void this.meta.syncSessionMeta(created.id);
+        }
+        if (prompt !== undefined && prompt.trim() !== '') {
+          await this.sendPrompt(created.id, prompt, files, agent);
+        }
       }
     },
     deleteSession: async (message) => {
@@ -281,8 +315,10 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
       this.armEventStream();
       this.post({ type: 'connected', connected: isConnected() });
       await this.sessions.refresh();
-      if (this.activeSessionId !== undefined && isConnected()) {
-        await this.history.loadHistory(this.activeSessionId);
+      for (const sessionId of this.sessions.getOpenSessionIds()) {
+        if (isConnected()) {
+          await this.history.loadHistory(sessionId);
+        }
       }
     },
     executeCommand: async (message) => {
@@ -523,14 +559,14 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
         break;
       case 'session.updated':
         this.sessions.scheduleRefresh();
-        // Authoritative re-sync of the active session's agent/model selection.
-        if (sessionID !== undefined && sessionID === this.activeSessionId) {
+        // Authoritative re-sync of an open session's agent/model selection.
+        if (sessionID !== undefined && this.sessions.isPaneOpen(sessionID)) {
           void this.meta.syncSessionMeta(sessionID);
         }
         break;
       case 'message.part.updated': {
         const part: Part | undefined = p.part ?? p.data?.part;
-        if (sessionID === undefined || sessionID !== this.activeSessionId || part === undefined) {
+        if (sessionID === undefined || !this.sessions.isPaneOpen(sessionID) || part === undefined) {
           break;
         }
         // Remember the part type so later `message.part.delta` events (which
@@ -568,7 +604,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
         const delta = typeof p.delta === 'string' ? p.delta : p.data?.delta;
         if (
           sessionID === undefined ||
-          sessionID !== this.activeSessionId ||
+          !this.sessions.isPaneOpen(sessionID) ||
           typeof messageID !== 'string' ||
           typeof partID !== 'string' ||
           field !== 'text' ||
@@ -600,7 +636,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
         if (info.role === 'assistant') {
           this.history.trackAssistantMessage(sessionID, info.id);
         }
-        if (sessionID !== this.activeSessionId) {
+        if (!this.sessions.isPaneOpen(sessionID)) {
           break;
         }
         // The SSE payload carries no parts; a full replace (with parts) is
@@ -616,7 +652,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
         const busy = status.type === 'busy' || status.type === 'retry';
         // Track busy for every session so a session switch re-posts the flag.
         this.busySessions.set(sessionID, busy);
-        if (sessionID === this.activeSessionId) {
+        if (this.sessions.isPaneOpen(sessionID)) {
           this.post({ type: 'busy', sessionId: sessionID, busy });
         }
         break;
@@ -626,7 +662,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
           break;
         }
         this.busySessions.set(sessionID, false);
-        if (sessionID === this.activeSessionId) {
+        if (this.sessions.isPaneOpen(sessionID)) {
           this.post({ type: 'busy', sessionId: sessionID, busy: false });
           // Authoritative reload: picks up tool parts, final text and the
           // real user message id that optimistic rendering faked.

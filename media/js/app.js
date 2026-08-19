@@ -60,6 +60,16 @@ import {
   hideQuestionCard,
 } from './cards.js';
 import { initCodeCopy } from './copy.js';
+import {
+  initLayout,
+  applyLayout,
+  openSession,
+  handleSessionDeleted,
+  getPaneConversation,
+  setOnFocusChange,
+  focusPane,
+  getGrid,
+} from './layout.js';
 
 function $(id) {
   return document.getElementById(id);
@@ -75,100 +85,126 @@ function route(msg) {
     case 'connected':
       applyConnected(msg.connected === true);
       break;
+    case 'chatLayout':
+      applyLayout(msg.layout);
+      break;
     case 'sessions':
       applySessions(msg);
       break;
     case 'history':
-      if (msg.sessionId === state.activeSessionId) {
-        renderHistory(msg);
+      // Route into the session's pane; drop if no pane is open for it.
+      if (getPaneConversation(msg.sessionId)) {
+        renderHistory(msg, msg.sessionId);
       }
       break;
     case 'delta':
-      if (msg.sessionId === state.activeSessionId) {
-        onDelta(msg);
-      }
+      onDelta(msg, msg.sessionId);
       break;
     case 'message':
-      if (msg.sessionId === state.activeSessionId) {
-        upsertMessage(msg.message);
-      }
+      upsertMessage(msg.message, msg.sessionId);
       break;
     case 'busy':
-      if (msg.sessionId === state.activeSessionId) {
-        setBusy(msg.busy === true);
-      }
+      setBusy(msg.busy === true, msg.sessionId);
       break;
     case 'sessionDeleted':
+      // Remove the pane first (repairs focus), then the list row + per-pane
+      // state.
+      handleSessionDeleted(msg.sessionId);
       removeSession(msg.sessionId);
       break;
     case 'catalog':
       state.catalog = msg;
       updateMetaBadges();
-      if (!state.agentMenu.hidden) {
+      if (state.agentMenu && !state.agentMenu.hidden) {
         renderAgentMenu();
       }
-      if (!state.modelMenu.hidden) {
+      if (state.modelMenu && !state.modelMenu.hidden) {
         renderModelMenu();
       }
-      if (!state.atPopup.hidden) {
+      if (state.atPopup && !state.atPopup.hidden) {
         renderAtPopup();
       }
       break;
     case 'files':
       state.files = Array.isArray(msg.files) ? msg.files : [];
-      if (!state.atPopup.hidden) {
+      if (state.atPopup && !state.atPopup.hidden) {
         renderAtPopup();
       }
       break;
     case 'sessionMeta':
-      if (msg.sessionId === state.activeSessionId) {
-        state.agent = typeof msg.agent === 'string' ? msg.agent : null;
-        state.model = msg.model && typeof msg.model === 'object' ? { providerID: msg.model.providerID, modelID: msg.model.modelID } : null;
+      if (msg.sessionId) {
+        if (typeof msg.agent === 'string') {
+          state.paneAgent[msg.sessionId] = msg.agent;
+        }
+        if (msg.model && typeof msg.model === 'object') {
+          state.paneModel[msg.sessionId] = { providerID: msg.model.providerID, modelID: msg.model.modelID };
+        }
         // Only update usage when present: setAgent/setModel echoes omit it,
         // and nulling it here would wipe the value between updates.
         if (msg.usage) {
-          state.usage = msg.usage;
+          state.paneUsage[msg.sessionId] = msg.usage;
         }
+        // Badges are per-pane — refresh all of them.
         updateMetaBadges();
-        if (!state.agentMenu.hidden) {
-          renderAgentMenu();
-        }
-        if (!state.modelMenu.hidden) {
-          renderModelMenu();
+        if (msg.sessionId === state.activeSessionId) {
+          if (state.agentMenu && !state.agentMenu.hidden) {
+            renderAgentMenu();
+          }
+          if (state.modelMenu && !state.modelMenu.hidden) {
+            renderModelMenu();
+          }
         }
       }
       break;
     case 'nativeResult':
-      if (msg.sessionId === state.activeSessionId) {
-        appendNativeResult(msg);
-      }
+      appendNativeResult(msg, msg.sessionId);
       break;
     case 'subagents':
-      if (msg.sessionId === state.activeSessionId) {
-        state.subagents = Array.isArray(msg.sessions) ? msg.sessions : [];
-        renderSessionList();
+      if (msg.sessionId) {
+        state.paneSubagents[msg.sessionId] = Array.isArray(msg.sessions) ? msg.sessions : [];
+        if (msg.sessionId === state.activeSessionId) {
+          state.subagents = state.paneSubagents[msg.sessionId];
+          renderSessionList();
+        }
       }
       break;
     case 'permission':
-      // The host already gates on the active session (or its subagent
-      // sessions); the webview shows whatever card arrives.
+      // Store per-pane and render into the OWNING pane's card (not the
+      // focused one) — the card stays visible in its pane regardless of
+      // focus.
       if (msg.request) {
-        showPermissionCard(msg.request);
+        const sid = msg.sessionId || msg.request.sessionID;
+        if (sid) {
+          state.panePendingPermission[sid] = msg.request;
+          showPermissionCard(msg.request, sid);
+        }
       }
       break;
     case 'permissionResolved':
-      if (state.pendingPermission && msg.requestID === state.pendingPermission.id) {
-        hidePermissionCard();
+      for (const sid in state.panePendingPermission) {
+        if (state.panePendingPermission[sid] && state.panePendingPermission[sid].id === msg.requestID) {
+          delete state.panePendingPermission[sid];
+          hidePermissionCard(sid);
+          break;
+        }
       }
       break;
     case 'question':
       if (msg.request) {
-        showQuestionCard(msg.request);
+        const sid = msg.sessionId || msg.request.sessionID;
+        if (sid) {
+          state.panePendingQuestion[sid] = msg.request;
+          showQuestionCard(msg.request, sid);
+        }
       }
       break;
     case 'questionResolved':
-      if (state.pendingQuestion && msg.requestID === state.pendingQuestion.id) {
-        hideQuestionCard();
+      for (const sid in state.panePendingQuestion) {
+        if (state.panePendingQuestion[sid] && state.panePendingQuestion[sid].id === msg.requestID) {
+          delete state.panePendingQuestion[sid];
+          hideQuestionCard(sid);
+          break;
+        }
       }
       break;
     case 'error':
@@ -177,6 +213,11 @@ function route(msg) {
       // on the disabled "Stopping…" pill — restore the clickable Stop so the
       // user can retry while the stream is still running.
       if (state.stopping) {
+        const sid = state.activeSessionId;
+        if (sid) {
+          state.paneStopping[sid] = false;
+          state.paneStoppedStream[sid] = false;
+        }
         state.stopping = false;
         state.stoppedStream = false;
         updateComposerState();
@@ -195,35 +236,39 @@ function route(msg) {
 function init() {
   state.app = $('app');
   state.disconnected = $('disconnected');
-  state.conversation = $('conversation');
   state.sessionList = $('sessionList');
   state.sessionCount = $('sessionCount');
   state.sessionToggle = $('sessionToggle');
   state.progress = $('progress');
   state.emptyNoSessions = $('emptyNoSessions');
   state.emptyConversation = $('emptyConversation');
-  state.input = $('input');
-  state.sendBtn = $('sendBtn');
   state.newSessionBtn = $('newSessionBtn');
   state.retryBtn = $('retryBtn');
   state.emptyNewBtn = $('emptyNewBtn');
   state.toast = $('toast');
-  state.agentPickerBtn = $('agentPickerBtn');
-  state.agentBadgeValue = $('agentBadgeValue');
-  state.modelPickerBtn = $('modelPickerBtn');
-  state.modelBadgeValue = $('modelBadgeValue');
-  state.thinkingToggle = $('thinkingToggle');
-  state.thinkingToggleValue = $('thinkingToggleValue');
-  state.contextUsageLine = $('contextUsageLine');
   state.subagentsToggle = $('subagentsToggle');
-  state.permissionCard = $('permissionCard');
-  state.questionCard = $('questionCard');
-  state.slashPopup = $('slashPopup');
-  state.atPopup = $('atPopup');
-  state.agentMenu = $('agentMenu');
-  state.modelMenu = $('modelMenu');
   state.helpOverlay = $('helpOverlay');
   state.helpList = $('helpList');
+  // NOTE: the composer DOM refs (state.input, state.sendBtn, the popups,
+  // meta badges, menus, cards) are NOT assigned here — those elements no
+  // longer exist globally. layout.js's syncComposerRefs re-points them at the
+  // focused pane's composer on every focus change (and nulls them otherwise).
+
+  // The chat grid owns pane rendering/focus; it re-points state.conversation
+  // at the focused pane's message list. Must run after the state.* DOM refs
+  // above are assigned.
+  initLayout();
+
+  // On pane focus change: refresh the composer, meta badges, and the
+  // session-list subagent rows for the newly focused session. Cards are
+  // per-pane (rendered in their owning pane) so they need no focus gating.
+  setOnFocusChange(function (sessionId) {
+    updateComposerState();
+    updateMetaBadges();
+    state.subagents = sessionId ? (state.paneSubagents[sessionId] || []) : [];
+    setSubagentsToggle(false);
+    renderSessionList();
+  });
 
   // Delegated listener for code-block copy buttons (survives streaming
   // re-renders; wired once, never re-wired).
@@ -267,8 +312,12 @@ function init() {
       return;
     }
     if (id !== state.activeSessionId) {
-      showProgress();
-      post({ type: 'selectSession', sessionId: id });
+      // Opening a brand-new pane triggers a host history load; show the
+      // progress bar only then (an already-open pane needs no reload).
+      if (!getPaneConversation(id)) {
+        showProgress();
+      }
+      openSession(id);
     }
   });
 
@@ -296,169 +345,216 @@ function init() {
     post({ type: 'setSubagentsVisible', sessionId: sessionId, visible: next });
   });
 
-  state.thinkingToggle.addEventListener('click', toggleThinking);
+  // ── Delegated composer listeners ────────────────────────────────────────
+  // The composer DOM lives per-pane (IDs are not globally unique), so these
+  // are delegated on the grid. layout.js's onGridClick (registered first)
+  // focuses the clicked pane BEFORE these run, re-pointing the state.*
+  // composer refs at that pane — so the handlers below operate on the right
+  // pane's elements. The input/keydown handlers also focus-first defensively.
 
-  state.input.addEventListener('input', function () {
+  const grid = getGrid();
+
+  grid.addEventListener('input', function (e) {
+    const ta = e.target.closest('.chat-pane-composer textarea');
+    if (!ta) {
+      return;
+    }
+    const pane = ta.closest('.chat-pane');
+    if (pane && pane.dataset.sessionId && !pane.hasAttribute('data-focused')) {
+      focusPane(pane.dataset.sessionId);
+    }
     autoGrow();
     updateComposerState();
     handleSlashTyping();
     handleAtTyping();
   });
-  state.input.addEventListener('keydown', function (e) {
-    if (!state.slashPopup.hidden) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+
+  grid.addEventListener('keydown', function (e) {
+    const ta = e.target.closest('.chat-pane-composer textarea');
+    if (ta) {
+      const pane = ta.closest('.chat-pane');
+      if (pane && pane.dataset.sessionId && !pane.hasAttribute('data-focused')) {
+        focusPane(pane.dataset.sessionId);
+      }
+      if (state.slashPopup && !state.slashPopup.hidden) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          moveSlashIndex(e.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (e.key === 'Enter' && !e.isComposing) {
+          e.preventDefault();
+          const item = slashItems[slashIndex];
+          if (item) {
+            selectSlashItem(item);
+          }
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeSlashPopup();
+          return;
+        }
+        return;
+      }
+      if (state.atPopup && !state.atPopup.hidden) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          moveAtIndex(e.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (e.key === 'Enter' && !e.isComposing) {
+          e.preventDefault();
+          const item = atItems[atIndex];
+          if (item) {
+            selectAtItem(item);
+          }
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeAtPopup();
+          return;
+        }
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
-        moveSlashIndex(e.key === 'ArrowDown' ? 1 : -1);
+        send();
+      }
+      return;
+    }
+    const qcard = e.target.closest('.question-card');
+    if (qcard) {
+      if (qcard.hidden) {
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        dismissQuestion();
         return;
       }
       if (e.key === 'Enter' && !e.isComposing) {
-        e.preventDefault();
-        const item = slashItems[slashIndex];
+        const send = qcard.querySelector('.question-btn.send');
+        if (send && !send.disabled) {
+          e.preventDefault();
+          sendQuestion();
+        }
+      }
+      return;
+    }
+    const menu = e.target.closest('.menu-popup');
+    if (menu) {
+      if (menu.id === 'agentMenu') {
+        if (menu.hidden) {
+          return;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          moveAgentIndex(e.key === 'ArrowDown' ? 1 : -1);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          selectCurrentAgent();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeAgentMenu();
+          if (state.input) {
+            state.input.focus();
+          }
+        }
+      } else if (menu.id === 'modelMenu') {
+        if (menu.hidden) {
+          return;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          moveModelIndex(e.key === 'ArrowDown' ? 1 : -1);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          selectCurrentModel();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeModelMenu();
+          if (state.input) {
+            state.input.focus();
+          }
+        }
+      }
+      return;
+    }
+  });
+
+  // The composer button is dual-purpose: send when idle, stop while busy.
+  grid.addEventListener('click', function (e) {
+    const sendBtn = e.target.closest('.send-btn');
+    if (sendBtn) {
+      if (state.busy && !state.stopping) {
+        stop();
+      } else {
+        send();
+      }
+      return;
+    }
+    const agentBtn = e.target.closest('#agentPickerBtn');
+    if (agentBtn) {
+      if (state.agentMenu && state.agentMenu.hidden) {
+        openAgentMenu();
+      } else {
+        closeAgentMenu();
+      }
+      return;
+    }
+    const modelBtn = e.target.closest('#modelPickerBtn');
+    if (modelBtn) {
+      if (state.modelMenu && state.modelMenu.hidden) {
+        openModelMenu();
+      } else {
+        closeModelMenu();
+      }
+      return;
+    }
+    const thinkBtn = e.target.closest('#thinkingToggle');
+    if (thinkBtn) {
+      toggleThinking();
+      return;
+    }
+    const agentMenu = e.target.closest('#agentMenu');
+    if (agentMenu) {
+      const row = e.target.closest('[data-agent]');
+      if (row) {
+        selectAgent(row.dataset.agent);
+      }
+      return;
+    }
+    const modelMenu = e.target.closest('#modelMenu');
+    if (modelMenu) {
+      const row = e.target.closest('[data-model]');
+      if (row) {
+        selectModel(row.dataset.provider, row.dataset.model);
+      }
+      return;
+    }
+    const slashPopup = e.target.closest('#slashPopup');
+    if (slashPopup) {
+      const row = e.target.closest('[data-index]');
+      if (row) {
+        const item = slashItems[Number(row.dataset.index)];
         if (item) {
           selectSlashItem(item);
         }
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        closeSlashPopup();
-        return;
       }
       return;
     }
-    if (!state.atPopup.hidden) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        moveAtIndex(e.key === 'ArrowDown' ? 1 : -1);
-        return;
-      }
-      if (e.key === 'Enter' && !e.isComposing) {
-        e.preventDefault();
-        const item = atItems[atIndex];
+    const atPopup = e.target.closest('#atPopup');
+    if (atPopup) {
+      const row = e.target.closest('[data-index]');
+      if (row) {
+        const item = atItems[Number(row.dataset.index)];
         if (item) {
           selectAtItem(item);
         }
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        closeAtPopup();
-        return;
       }
       return;
-    }
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      send();
-    }
-  });
-  // The composer button is dual-purpose: send when idle, stop while busy.
-  state.sendBtn.addEventListener('click', function () {
-    if (state.busy && !state.stopping) {
-      stop();
-    } else {
-      send();
-    }
-  });
-
-  // Question card keyboard: Escape dismisses, Enter sends once answered.
-  state.questionCard.addEventListener('keydown', function (e) {
-    if (state.questionCard.hidden) {
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      dismissQuestion();
-      return;
-    }
-    if (e.key === 'Enter' && !e.isComposing) {
-      const send = state.questionCard.querySelector('.question-btn.send');
-      if (send && !send.disabled) {
-        e.preventDefault();
-        sendQuestion();
-      }
-    }
-  });
-
-  state.slashPopup.addEventListener('click', function (e) {
-    const row = e.target.closest('[data-index]');
-    if (!row) {
-      return;
-    }
-    const item = slashItems[Number(row.dataset.index)];
-    if (item) {
-      selectSlashItem(item);
-    }
-  });
-
-  state.atPopup.addEventListener('click', function (e) {
-    const row = e.target.closest('[data-index]');
-    if (!row) {
-      return;
-    }
-    const item = atItems[Number(row.dataset.index)];
-    if (item) {
-      selectAtItem(item);
-    }
-  });
-
-  state.agentPickerBtn.addEventListener('click', function () {
-    if (state.agentMenu.hidden) {
-      openAgentMenu();
-    } else {
-      closeAgentMenu();
-    }
-  });
-  state.agentMenu.addEventListener('keydown', function (e) {
-    if (state.agentMenu.hidden) {
-      return;
-    }
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      moveAgentIndex(e.key === 'ArrowDown' ? 1 : -1);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      selectCurrentAgent();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      closeAgentMenu();
-      state.input.focus();
-    }
-  });
-  state.agentMenu.addEventListener('click', function (e) {
-    const row = e.target.closest('[data-agent]');
-    if (row) {
-      selectAgent(row.dataset.agent);
-    }
-  });
-
-  state.modelPickerBtn.addEventListener('click', function () {
-    if (state.modelMenu.hidden) {
-      openModelMenu();
-    } else {
-      closeModelMenu();
-    }
-  });
-  state.modelMenu.addEventListener('keydown', function (e) {
-    if (state.modelMenu.hidden) {
-      return;
-    }
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      moveModelIndex(e.key === 'ArrowDown' ? 1 : -1);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      selectCurrentModel();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      closeModelMenu();
-      state.input.focus();
-    }
-  });
-  state.modelMenu.addEventListener('click', function (e) {
-    const row = e.target.closest('[data-model]');
-    if (row) {
-      selectModel(row.dataset.provider, row.dataset.model);
     }
   });
 
@@ -471,27 +567,32 @@ function init() {
     if (e.key === 'Escape') {
       e.preventDefault();
       closeHelp();
-      state.input.focus();
+      if (state.input) {
+        state.input.focus();
+      }
     }
   });
   $('helpClose').addEventListener('click', function () {
     closeHelp();
-    state.input.focus();
+    if (state.input) {
+      state.input.focus();
+    }
   });
 
-  // Close popups/dropdowns when the pointer lands elsewhere.
+  // Close popups/dropdowns when the pointer lands elsewhere. The composer
+  // refs are null when no pane is focused — guard each.
   document.addEventListener('pointerdown', function (e) {
     const t = e.target;
-    if (!state.slashPopup.hidden && t !== state.input && !state.input.contains(t) && !state.slashPopup.contains(t)) {
+    if (state.slashPopup && !state.slashPopup.hidden && t !== state.input && !state.input.contains(t) && !state.slashPopup.contains(t)) {
       closeSlashPopup();
     }
-    if (!state.atPopup.hidden && t !== state.input && !state.input.contains(t) && !state.atPopup.contains(t)) {
+    if (state.atPopup && !state.atPopup.hidden && t !== state.input && !state.input.contains(t) && !state.atPopup.contains(t)) {
       closeAtPopup();
     }
-    if (!state.agentMenu.hidden && t !== state.agentPickerBtn && !state.agentPickerBtn.contains(t) && !state.agentMenu.contains(t)) {
+    if (state.agentMenu && !state.agentMenu.hidden && t !== state.agentPickerBtn && !state.agentPickerBtn.contains(t) && !state.agentMenu.contains(t)) {
       closeAgentMenu();
     }
-    if (!state.modelMenu.hidden && t !== state.modelPickerBtn && !state.modelPickerBtn.contains(t) && !state.modelMenu.contains(t)) {
+    if (state.modelMenu && !state.modelMenu.hidden && t !== state.modelPickerBtn && !state.modelPickerBtn.contains(t) && !state.modelMenu.contains(t)) {
       closeModelMenu();
     }
   });

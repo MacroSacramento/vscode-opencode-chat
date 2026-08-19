@@ -18,6 +18,12 @@
   --oc-snippet-bg: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.12));
   --oc-inline-code: var(--vscode-textPreformat-foreground, var(--vscode-editor-foreground));
   --oc-focus: var(--vscode-focusBorder, rgba(0, 122, 204, 0.8));
+  /* Minimum height every open pane reserves: composer (~121-146px when the
+     agent/model/thinking pills wrap in a narrow sidebar) + a usable
+     conversation strip (~100px). Earlier floors below this crushed the
+     conversation to padding-only. Mild grid scroll is the accepted tradeoff
+     over squished-unreadable panes. */
+  --oc-pane-min-height: 240px;
 }
 
 * {
@@ -335,12 +341,404 @@ code {
   display: flex;
 }
 
-.conversation {
+/* ── Chat grid (flat split-view groups) ────────────────────────────────── */
+/* Flat panes, no cards: groups are bare split-views whose panes are
+   separated by thin dividers. The grid scrolls when groups overflow; each
+   .chat-pane-conversation scrolls independently. */
+
+.chat-grid {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px 12px 16px;
+}
+
+/* Drag-only empty targets — hidden unless a session drag is over the empty
+   grid. The hint is the "create a group" target when the grid has no panes;
+   the dashed strip at the bottom of the grid covers the same for a grid
+   that already has groups. */
+.grid-empty-hint {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 32px;
+  text-align: center;
+  color: var(--oc-text-subtle);
+  border: 1px dashed var(--oc-border);
+  border-radius: var(--oc-radius-lg);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.grid-empty-hint.drag-over {
+  border-color: var(--oc-focus);
+  background: var(--vscode-sideBar-dropBackground, rgba(0, 122, 204, 0.08));
+}
+
+.grid-empty-icon {
+  display: flex;
+  margin-bottom: 8px;
+  opacity: 0.55;
+}
+
+.grid-empty-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground, var(--vscode-editor-foreground));
+}
+
+.grid-empty-sub {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── Zones & splits ─────────────────────────────────────────────────────── */
+/* A zone (.chat-group) is a tab bar + pane container; a split
+   (.chat-split) is a structural flex wrapper that lays its children out
+   side by side (horizontal) or stacked (vertical). The grid scrolls when the
+   tree's total height exceeds the container. */
+
+.chat-split {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.chat-split[data-orientation="horizontal"] {
+  flex-direction: row;
+}
+
+.chat-split[data-orientation="vertical"] {
+  flex-direction: column;
+}
+
+/* Zone — tab bar on top, pane below. flex-basis 0 so zones share space
+   equally by flex-grow (a content-heavy pane doesn't hog it). The pane
+   carries --oc-pane-min-height, so a lone zone fills the grid while stacked
+   zones each reserve composer + a usable conversation strip. */
+.chat-group {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.chat-group.drag-over {
+  box-shadow: inset 0 0 0 1px var(--oc-focus);
+  background: var(--vscode-sideBar-dropBackground, rgba(0, 122, 204, 0.08));
+}
+
+/* 5-region edge-split overlay — drag-only, covers each zone. Regions are
+   fixed 22px bands (EDGE in layout.js) with the center being everything
+   inside them. Hidden unless a drag is live; only the region under the
+   pointer gets .active. */
+.chat-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: none;
+  /* Never intercept pointer events: while a drag is live the overlay covers
+     each zone, and if it became the element under the pointer Chromium would
+     cancel the drag the moment it appears over the source tab. The drop
+     regions are resolved from coordinates (layout.js dropTargetMode), so the
+     overlay only needs to be visible, not hit-testable. */
+  pointer-events: none;
+}
+
+body.dragging .chat-drop-overlay {
+  display: block;
+}
+
+.chat-drop-region {
+  position: absolute;
+  display: none;
+  background: var(--vscode-sideBar-dropBackground, rgba(0, 122, 204, 0.08));
+  border-radius: var(--oc-radius-md);
+}
+
+.chat-drop-region.active {
+  display: block;
+}
+
+.chat-drop-region.top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+}
+
+.chat-drop-region.bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+}
+
+.chat-drop-region.left {
+  top: 22px;
+  bottom: 22px;
+  left: 0;
+  width: 22px;
+}
+
+.chat-drop-region.right {
+  top: 22px;
+  bottom: 22px;
+  right: 0;
+  width: 22px;
+}
+
+.chat-drop-region.center {
+  top: 22px;
+  bottom: 22px;
+  left: 22px;
+  right: 22px;
+}
+
+/* Tab bar — VS Code-like tabs, one per open session in the zone. */
+.chat-tabbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 2px 4px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.chat-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 160px;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-tab-inactiveForeground, var(--oc-text-subtle));
+  background: var(--vscode-tab-inactiveBackground, transparent);
+  border-radius: var(--oc-radius-sm) var(--oc-radius-sm) 0 0;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  position: relative;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.chat-tab:hover {
+  background: var(--vscode-tab-hoverBackground, var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.1)));
+}
+
+.chat-tab.active {
+  color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
+  background: var(--vscode-tab-activeBackground, var(--oc-chat-bg));
+  box-shadow: inset 0 1px 0 0 var(--vscode-tab-activeBorderTop, var(--oc-focus));
+}
+
+.chat-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-tab-close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  color: inherit;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.chat-tab:hover .chat-tab-close,
+.chat-tab:focus-within .chat-tab-close {
+  opacity: 0.8;
+}
+
+.chat-tab-close:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+.chat-tab-close svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* Tab drag source states — same language as the session-list rows. */
+body.dragging .chat-tab {
+  opacity: 0.55;
+}
+
+.chat-tab.dragging {
+  opacity: 0.4;
+  outline: 1px dashed var(--oc-focus);
+  outline-offset: -1px;
+}
+
+/* While a drag is live, only the source tab stays hit-testable. The other
+   tabs (and their label/close children) are pointer-events: none so the
+   pointer lands on the tab bar instead of bouncing across each tab's label
+   and close-button boundaries. That churn left the last event before release
+   as a dragleave, so the browser never fired `drop` and reordering silently
+   failed. Routing the drop to the stable tab bar fixes it. */
+body.dragging .chat-tab:not(.dragging) {
+  pointer-events: none;
+}
+
+/* Insert-position indicators: a 2px accent bar in the gap between tabs.
+   ::before = insert before this tab, ::after = insert after. CSP-safe —
+   no inline styles, pure pseudo-elements. */
+.chat-tab.tab-gap-left::before,
+.chat-tab.tab-gap-right::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--oc-focus);
+  z-index: 1;
+}
+
+.chat-tab.tab-gap-left::before {
+  left: -2px;
+}
+
+.chat-tab.tab-gap-right::after {
+  right: -2px;
+}
+
+.chat-group-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Pane — a distinct bordered card. The ring is an inset box-shadow (no real
+   border) so it never shifts layout or triggers reflow/scroll jump; a subtle
+   radius softens the corners. Only the focused tab's pane is visible; the
+   rest carry the `hidden` attribute (display:none) but stay in the DOM so
+   their messages keep rendering. */
+.chat-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--oc-pane-min-height);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: transparent;
+  border-radius: var(--oc-radius-md);
+  box-shadow: inset 0 0 0 1px var(--oc-border);
+}
+
+/* Focused pane — the active chat gets a thicker accent ring layered INSIDE
+   the open-pane border ring (3px total: 2px focus + 1px border outside it),
+   so it stays clearly highlighted while still reading as a bordered pane.
+   All inset — no layout shift, no reflow/scroll jump. Radius inherited from
+   the base pane. */
+.chat-pane[data-focused] {
+  box-shadow: inset 0 0 0 2px var(--oc-focus), inset 0 0 0 3px var(--oc-border);
+}
+
+.chat-pane-conversation {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 10px 12px;
+}
+
+/* Per-pane empty placeholder — centered in the pane's scroll area. */
+.chat-pane-empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 16px;
+  text-align: center;
+  color: var(--oc-text-subtle);
+}
+
+.chat-pane-empty-icon {
+  display: flex;
+  margin-bottom: 4px;
+  opacity: 0.5;
+}
+
+.chat-pane-empty-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-foreground, var(--vscode-editor-foreground));
+}
+
+.chat-pane-empty-sub {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* :has() progressive enhancement — hides the placeholder the moment the
+   first bubble lands, without a JS round-trip. layout.js also toggles the
+   hidden attribute, so this is belt-and-suspenders. */
+.chat-pane-conversation:has(.message) .chat-pane-empty {
+  display: none;
+}
+
+/* "New group" drop strip — drag-only, dashed. */
+.grid-drop-zone {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 42px;
+  border: 1px dashed var(--oc-border);
+  border-radius: var(--oc-radius-md);
+  color: var(--oc-text-subtle);
+  font-size: 11px;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.grid-drop-zone.drag-over {
+  border-color: var(--oc-focus);
+  color: var(--vscode-foreground, var(--vscode-editor-foreground));
+  background: var(--vscode-sideBar-dropBackground, rgba(0, 122, 204, 0.08));
+}
+
+.grid-drop-zone svg {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+/* ── Drag source states (session list rows) ────────────────────────────── */
+
+body.dragging .session-row {
+  opacity: 0.55;
+}
+
+.session-row.dragging {
+  opacity: 0.4;
+  outline: 1px dashed var(--oc-focus);
+  outline-offset: -1px;
 }
 
 .progress {
@@ -1309,15 +1707,18 @@ code {
   background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.08));
 }
 
-/* ── Composer ───────────────────────────────────────────────────────────── */
+/* ── Per-pane composer ──────────────────────────────────────────────────── */
+/* Each pane is a full chat window: conversation + its own composer footer.
+   The composer is position:relative so the slash/at popups and picker menus
+   anchor to it and open upward into the pane. */
 
-.composer {
+.chat-pane-composer {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  padding: 8px 12px 10px;
+  padding: 6px 8px 8px;
   border-top: 1px solid var(--oc-border);
-  background: var(--oc-chat-bg);
+  position: relative;
 }
 
 .composer-row {
@@ -1335,7 +1736,7 @@ code {
   border-color: var(--oc-focus);
 }
 
-.composer textarea {
+.chat-pane-composer textarea {
   flex: 1 1 auto;
   min-width: 0;
   align-self: center;
@@ -1354,7 +1755,7 @@ code {
   padding: 2px 0 3px;
 }
 
-.composer textarea::placeholder {
+.chat-pane-composer textarea::placeholder {
   color: var(--vscode-input-placeholderForeground, var(--oc-text-subtle));
   opacity: 0.85;
   white-space: nowrap;
@@ -1362,7 +1763,7 @@ code {
   text-overflow: ellipsis;
 }
 
-.composer textarea:disabled {
+.chat-pane-composer textarea:disabled {
   opacity: 0.55;
 }
 
@@ -1518,10 +1919,6 @@ code {
 }
 
 /* ── Composer meta strip (agent/model pickers) ──────────────────────────── */
-
-.composer {
-  position: relative;
-}
 
 .meta-strip {
   display: flex;
@@ -1933,9 +2330,9 @@ code {
 }
 
 /* ── Question prompt card ──────────────────────────────────────────────── */
-/* Sibling of the permission card: both now live inside `footer.composer` as
-   static, full-width flex items, so they extend the footer upward instead of
-   overlaying chat text. Flat, integrated into the footer (chat-bg family, no
+/* Sibling of the permission card: both now live inside `.chat-pane-composer`
+   as static, full-width flex items, so they extend the composer upward
+   instead of overlaying chat text. Flat, integrated (chat-bg family, no
    shadow/radius/left accent). The permission card keeps its danger-red theme.
    The permission card precedes the question card in the DOM, so if both ever
    show it stacks above (topmost) rather than hiding behind the question.

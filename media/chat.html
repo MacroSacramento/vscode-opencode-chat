@@ -53,7 +53,35 @@
 
     <section class="conversation-wrap">
       <div id="progress" class="progress" hidden></div>
-      <main id="conversation" class="conversation" aria-live="polite"></main>
+
+      <!--
+        Chat grid: replaces the single #conversation scroll area. Flat panes
+        are built by media/js/layout.js (drag & drop from the session list,
+        orientation, focus). The two children below are drag-only chrome:
+        the empty-grid hint (shown while a session drag is over the empty
+        grid) and the dashed "new group" drop strip (shown while a drag is
+        over a grid that already has groups). Both stay hidden otherwise.
+        layout.js re-creates them defensively if a full conversation wipe
+        removes them.
+      -->
+      <main id="chatGrid" class="chat-grid" aria-live="polite">
+        <div class="grid-empty-hint" hidden>
+          <div class="grid-empty-icon" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+              <title>grid</title>
+              <path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+            </svg>
+          </div>
+          <p class="grid-empty-title">No chats in view</p>
+          <p class="grid-empty-sub">Drag sessions from the list here to compare side by side.</p>
+        </div>
+        <div class="grid-drop-zone" hidden>
+          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+          <span>Drop here to create a new group</span>
+        </div>
+      </main>
 
       <div id="emptyNoSessions" class="empty-state" hidden>
         <div class="empty-icon" aria-hidden="true">
@@ -78,56 +106,6 @@
         <p class="empty-sub">Ask something to get started.</p>
       </div>
     </section>
-
-    <footer class="composer">
-      <div id="permissionCard" class="permission-card" role="alertdialog" aria-label="Permission required" hidden></div>
-
-      <div id="questionCard" class="question-card" role="dialog" aria-label="OpenCode question" tabindex="-1" hidden></div>
-
-      <div id="slashPopup" class="slash-popup" hidden></div>
-      <div id="atPopup" class="slash-popup" hidden></div>
-      <div class="meta-strip">
-        <span class="meta-badge-wrap">
-          <button id="agentPickerBtn" class="meta-badge" type="button" title="Agent: default" disabled>
-            <span class="meta-badge-label">agent</span>
-            <span id="agentBadgeValue" class="meta-badge-value">default</span>
-          </button>
-          <div id="agentMenu" class="menu-popup" hidden tabindex="-1"></div>
-        </span>
-        <span class="meta-badge-wrap">
-          <button id="modelPickerBtn" class="meta-badge" type="button" title="Model: default" disabled>
-            <span class="meta-badge-label">model</span>
-            <span id="modelBadgeValue" class="meta-badge-value">model</span>
-          </button>
-          <div id="modelMenu" class="menu-popup" hidden tabindex="-1"></div>
-        </span>
-        <span class="meta-badge-wrap">
-          <button id="thinkingToggle" class="meta-badge thinking-toggle" type="button" title="Show model thinking" aria-pressed="false">
-            <svg class="thinking-eye" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M8 3C4.5 3 1.7 5.3 1 8c.7 2.7 3.5 5 7 5s6.3-2.3 7-5c-.7-2.7-3.5-5-7-5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-              <circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.2" />
-            </svg>
-            <span class="meta-badge-label">thinking</span>
-            <span id="thinkingToggleValue" class="meta-badge-value thinking-toggle-value">off</span>
-          </button>
-        </span>
-      </div>
-      <div class="composer-row">
-        <textarea id="input" rows="1" placeholder="Ask OpenCode…" spellcheck="false"></textarea>
-        <button id="sendBtn" class="send-btn" type="button" title="Send (Enter)" aria-label="Send" disabled>
-          <svg class="send-ico" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M14 2L1.8 6.6l4.9 2.1L9 13.8 14 2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-            <path d="M6.7 8.7L14 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-          </svg>
-          <svg class="stop-ico" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="3.5" y="3.5" width="9" height="9" rx="1.6" fill="currentColor" />
-          </svg>
-          <span class="stop-label" hidden>Stopping&hellip;</span>
-        </button>
-      </div>
-      <div class="composer-hint">Enter to send &middot; Shift+Enter for a new line</div>
-      <div id="contextUsageLine" class="context-usage-line" hidden></div>
-    </footer>
   </div>
 
   <div id="disconnected" class="disconnected">

@@ -1,23 +1,44 @@
 import { state } from './state.js';
 import { post, scrollToBottom } from './utils.js';
 import { buildMetaChip, wrapChips } from './parts.js';
+import { getPaneConversation } from './layout.js';
+
+// ── Per-pane card resolution ─────────────────────────────────────────────
+// Cards render in the OWNING pane (the session that requested permission /
+// asked a question), not the focused pane. Each pane carries its own
+// #permissionCard / #questionCard; resolve the right one from the session id.
+
+function paneCard(sessionId, id) {
+  const conv = getPaneConversation(sessionId);
+  if (!conv) {
+    return null;
+  }
+  const pane = conv.closest('.chat-pane');
+  return pane ? pane.querySelector('#' + id) : null;
+}
 
 // ── Permission prompts ──────────────────────────────────────────────────
 
-function buildPermissionButton(label, reply, className) {
+function buildPermissionButton(label, reply, className, sessionId) {
   const btn = document.createElement('button');
   btn.className = className;
   btn.type = 'button';
   btn.textContent = label;
   btn.addEventListener('click', function () {
-    replyPermission(reply);
+    replyPermission(reply, sessionId);
   });
   return btn;
 }
 
-export function showPermissionCard(request) {
-  state.pendingPermission = request;
-  const card = state.permissionCard;
+export function showPermissionCard(request, sessionId) {
+  const sid = sessionId || (request && request.sessionID) || state.activeSessionId;
+  if (sid) {
+    state.panePendingPermission[sid] = request;
+  }
+  const card = paneCard(sid, 'permissionCard');
+  if (!card) {
+    return;
+  }
   card.textContent = '';
 
   const head = document.createElement('div');
@@ -38,9 +59,9 @@ export function showPermissionCard(request) {
 
   const actions = document.createElement('div');
   actions.className = 'permission-actions';
-  actions.appendChild(buildPermissionButton('Allow', 'once', 'permission-btn allow'));
-  actions.appendChild(buildPermissionButton('Always allow', 'always', 'permission-btn always'));
-  actions.appendChild(buildPermissionButton('Deny', 'reject', 'permission-btn deny'));
+  actions.appendChild(buildPermissionButton('Allow', 'once', 'permission-btn allow', sid));
+  actions.appendChild(buildPermissionButton('Always allow', 'always', 'permission-btn always', sid));
+  actions.appendChild(buildPermissionButton('Deny', 'reject', 'permission-btn deny', sid));
 
   card.appendChild(head);
   card.appendChild(text);
@@ -48,13 +69,27 @@ export function showPermissionCard(request) {
   card.hidden = false;
 }
 
-export function hidePermissionCard() {
-  state.pendingPermission = null;
-  state.permissionCard.hidden = true;
+// Hides the owning pane's card. With no sessionId, hides every pane's card
+// (used on disconnect).
+export function hidePermissionCard(sessionId) {
+  const sid = sessionId || state.activeSessionId;
+  if (sid) {
+    const card = paneCard(sid, 'permissionCard');
+    if (card) {
+      card.hidden = true;
+    }
+    delete state.panePendingPermission[sid];
+    return;
+  }
+  document.querySelectorAll('.chat-pane #permissionCard').forEach(function (card) {
+    card.hidden = true;
+  });
+  state.panePendingPermission = {};
 }
 
-export function replyPermission(reply) {
-  const req = state.pendingPermission;
+export function replyPermission(reply, sessionId) {
+  const sid = sessionId || state.activeSessionId;
+  const req = sid ? state.panePendingPermission[sid] : null;
   if (!req) {
     return;
   }
@@ -67,7 +102,10 @@ export function replyPermission(reply) {
   });
   // Optimistic: the server's permission.replied event (or a failed reply
   // surfacing as a toast) catches the fall-through.
-  hidePermissionCard();
+  if (sid) {
+    delete state.panePendingPermission[sid];
+  }
+  hidePermissionCard(sid);
 }
 
 // ── Question prompts ────────────────────────────────────────────────────
@@ -116,6 +154,7 @@ export function buildQuestionOption(q, opt) {
 }
 
 export function toggleQuestionOption(row, multiple) {
+  const sid = row.closest('.chat-pane').dataset.sessionId;
   const options = row.parentElement;
   if (multiple) {
     const selected = row.classList.toggle('selected');
@@ -132,12 +171,13 @@ export function toggleQuestionOption(row, multiple) {
     row.setAttribute('aria-checked', 'true');
     row.querySelector('.question-option-mark').textContent = QUESTION_MARKS.on;
   }
-  updateQuestionSendState();
+  updateQuestionSendState(sid);
 }
 
-export function updateQuestionSendState() {
-  const card = state.questionCard;
-  if (card.hidden || !state.pendingQuestion) {
+function updateQuestionSendState(sessionId) {
+  const card = paneCard(sessionId, 'questionCard');
+  const req = state.panePendingQuestion[sessionId];
+  if (!card || card.hidden || !req) {
     return;
   }
   const send = card.querySelector('.question-btn.send');
@@ -147,7 +187,7 @@ export function updateQuestionSendState() {
   const blocks = card.querySelectorAll('.question-block');
   let complete = blocks.length > 0;
   blocks.forEach(function (block) {
-    const q = state.pendingQuestion.questions[Number(block.dataset.qIndex)];
+    const q = req.questions[Number(block.dataset.qIndex)];
     if (!q) {
       complete = false;
       return;
@@ -162,14 +202,20 @@ export function updateQuestionSendState() {
   send.disabled = !complete;
 }
 
-export function showQuestionCard(request) {
-  state.pendingQuestion = request;
-  const card = state.questionCard;
+export function showQuestionCard(request, sessionId) {
+  const sid = sessionId || (request && request.sessionID) || state.activeSessionId;
+  if (sid) {
+    state.panePendingQuestion[sid] = request;
+  }
+  const card = paneCard(sid, 'questionCard');
+  if (!card) {
+    return;
+  }
   const questions = request.questions || [];
 
   // Guard: nothing to ask, don't render the card.
   if (questions.length === 0) {
-    hideQuestionCard();
+    hideQuestionCard(sid);
     return;
   }
 
@@ -216,7 +262,9 @@ export function showQuestionCard(request) {
       input.className = 'question-custom';
       input.type = 'text';
       input.placeholder = 'Or type your own answer\u2026';
-      input.addEventListener('input', updateQuestionSendState);
+      input.addEventListener('input', function () {
+        updateQuestionSendState(sid);
+      });
       block.appendChild(input);
     }
 
@@ -234,7 +282,7 @@ export function showQuestionCard(request) {
   back.type = 'button';
   back.textContent = 'Back';
   back.addEventListener('click', function () {
-    gotoQuestion(currentQuestionIndex - 1);
+    gotoQuestion(card, currentQuestionIndex - 1);
   });
   const progress = document.createElement('span');
   progress.className = 'question-progress';
@@ -243,7 +291,7 @@ export function showQuestionCard(request) {
   next.type = 'button';
   next.textContent = 'Next';
   next.addEventListener('click', function () {
-    gotoQuestion(currentQuestionIndex + 1);
+    gotoQuestion(card, currentQuestionIndex + 1);
   });
   pager.appendChild(back);
   pager.appendChild(progress);
@@ -255,13 +303,17 @@ export function showQuestionCard(request) {
   dismiss.className = 'question-btn dismiss';
   dismiss.type = 'button';
   dismiss.textContent = 'Dismiss';
-  dismiss.addEventListener('click', dismissQuestion);
+  dismiss.addEventListener('click', function () {
+    dismissQuestion(sid);
+  });
   const send = document.createElement('button');
   send.className = 'question-btn send';
   send.type = 'button';
   send.textContent = 'Send';
   send.disabled = true;
-  send.addEventListener('click', sendQuestion);
+  send.addEventListener('click', function () {
+    sendQuestion(sid);
+  });
   actions.appendChild(dismiss);
   actions.appendChild(send);
 
@@ -270,7 +322,7 @@ export function showQuestionCard(request) {
   card.appendChild(footer);
 
   // Paging keyboard (ArrowLeft/ArrowRight) — attach once per card element.
-  // Escape/Enter stay handled by app.js's existing keydown listener.
+  // Escape/Enter stay handled by app.js's delegated keydown listener.
   if (!card.dataset.pagerKeys) {
     card.dataset.pagerKeys = '1';
     card.addEventListener('keydown', function (e) {
@@ -279,29 +331,28 @@ export function showQuestionCard(request) {
       }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        gotoQuestion(currentQuestionIndex - 1);
+        gotoQuestion(card, currentQuestionIndex - 1);
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        gotoQuestion(currentQuestionIndex + 1);
+        gotoQuestion(card, currentQuestionIndex + 1);
       }
     });
   }
 
   currentQuestionIndex = 0;
-  updateQuestionPager(blocks);
+  updateQuestionPager(card, blocks);
   card.hidden = false;
   card.focus();
-  updateQuestionSendState();
+  updateQuestionSendState(sid);
 }
 
-function gotoQuestion(index) {
-  const card = state.questionCard;
+function gotoQuestion(card, index) {
   const blocks = Array.prototype.slice.call(card.querySelectorAll('.question-block'));
   if (index < 0 || index >= blocks.length) {
     return;
   }
   currentQuestionIndex = index;
-  updateQuestionPager(blocks);
+  updateQuestionPager(card, blocks);
   // Move focus to the newly shown block so keyboard users aren't stranded.
   const block = blocks[index];
   const focusable = block.querySelector('.question-option') || block.querySelector('.question-custom');
@@ -310,8 +361,7 @@ function gotoQuestion(index) {
   }
 }
 
-function updateQuestionPager(blocks) {
-  const card = state.questionCard;
+function updateQuestionPager(card, blocks) {
   const total = blocks.length;
   const pager = card.querySelector('.question-pager');
   const actions = card.querySelector('.question-actions');
@@ -343,18 +393,36 @@ function updateQuestionPager(blocks) {
   });
 }
 
-export function hideQuestionCard() {
-  state.pendingQuestion = null;
-  state.questionCard.hidden = true;
-  state.questionCard.textContent = '';
+// Hides the owning pane's card. With no sessionId, hides every pane's card
+// (used on disconnect).
+export function hideQuestionCard(sessionId) {
+  const sid = sessionId || state.activeSessionId;
+  if (sid) {
+    const card = paneCard(sid, 'questionCard');
+    if (card) {
+      card.hidden = true;
+      card.textContent = '';
+    }
+    delete state.panePendingQuestion[sid];
+    return;
+  }
+  document.querySelectorAll('.chat-pane #questionCard').forEach(function (card) {
+    card.hidden = true;
+    card.textContent = '';
+  });
+  state.panePendingQuestion = {};
 }
 
-export function sendQuestion() {
-  const req = state.pendingQuestion;
+export function sendQuestion(sessionId) {
+  const sid = sessionId || state.activeSessionId;
+  const req = sid ? state.panePendingQuestion[sid] : null;
   if (!req) {
     return;
   }
-  const card = state.questionCard;
+  const card = paneCard(sid, 'questionCard');
+  if (!card) {
+    return;
+  }
   const answers = [];
   const blocks = card.querySelectorAll('.question-block');
   blocks.forEach(function (block) {
@@ -387,7 +455,10 @@ export function sendQuestion() {
   appendAnsweredNote(req.questions.length);
   // Optimistic: the server's question.replied event (or a failed reply
   // surfacing as a toast) catches the fall-through.
-  hideQuestionCard();
+  if (sid) {
+    delete state.panePendingQuestion[sid];
+  }
+  hideQuestionCard(sid);
 }
 
 // Transient in-thread note that the user answered the question card. It is
@@ -407,8 +478,9 @@ function appendAnsweredNote(count) {
   scrollToBottom();
 }
 
-export function dismissQuestion() {
-  const req = state.pendingQuestion;
+export function dismissQuestion(sessionId) {
+  const sid = sessionId || state.activeSessionId;
+  const req = sid ? state.panePendingQuestion[sid] : null;
   if (!req) {
     return;
   }
@@ -420,5 +492,8 @@ export function dismissQuestion() {
     answers: [],
     reject: true,
   });
-  hideQuestionCard();
+  if (sid) {
+    delete state.panePendingQuestion[sid];
+  }
+  hideQuestionCard(sid);
 }

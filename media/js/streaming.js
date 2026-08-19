@@ -1,12 +1,15 @@
 import { state } from './state.js';
-import { findMessageEl, maybeScrollBottom } from './utils.js';
+import { findMessageEl, maybeScrollBottomIn } from './utils.js';
 import { buildMessageEl } from './parts.js';
 import { renderMarkdown } from './markdown.js';
+import { getPaneConversation } from './layout.js';
 
 // ── Streaming ────────────────────────────────────────────────────────────
 
 let renderQueued = false;
-let queuedTarget = null;
+// A Set of render targets: two panes streaming concurrently must both be
+// flushed in the same rAF pass — a single slot would drop one stream.
+const queuedTargets = new Set();
 
 // Per-stream render throttle: each stream element carries `_lastRenderAt`
 // (ms timestamp of the last actual render) and `_lastRenderedLen` (length of
@@ -41,28 +44,30 @@ export function renderStreamNow(t, force) {
 }
 
 function scheduleStreamRender(target) {
-  queuedTarget = target;
+  queuedTargets.add(target);
   if (renderQueued) {
     return;
   }
   renderQueued = true;
   requestAnimationFrame(function () {
     renderQueued = false;
-    const t = queuedTarget;
-    queuedTarget = null;
-    if (!t || !document.contains(t)) {
-      return;
-    }
-    if (renderStreamNow(t, false)) {
-      maybeScrollBottom();
-    }
+    const targets = Array.from(queuedTargets);
+    queuedTargets.clear();
+    targets.forEach(function (t) {
+      if (!document.contains(t)) {
+        return;
+      }
+      if (renderStreamNow(t, false)) {
+        maybeScrollBottomIn(t.closest('.chat-pane-conversation'));
+      }
+    });
   });
 }
 
 // ── Live thinking (streamed reasoning) ──────────────────────────────────
 
 let thinkRenderQueued = false;
-let thinkQueuedTarget = null;
+const thinkQueuedTargets = new Set();
 
 // Per-stream reasoning render throttle, mirroring the text path: the body
 // element carries `_lastThinkRenderAt` (ms of last actual render) and
@@ -83,25 +88,27 @@ function renderThinkingNow(body, force) {
 }
 
 function scheduleThinkingRender(stream) {
-  thinkQueuedTarget = stream;
+  thinkQueuedTargets.add(stream);
   if (thinkRenderQueued) {
     return;
   }
   thinkRenderQueued = true;
   requestAnimationFrame(function () {
     thinkRenderQueued = false;
-    const s = thinkQueuedTarget;
-    thinkQueuedTarget = null;
-    if (!s || !document.contains(s)) {
-      return;
-    }
-    const body = s.querySelector('.reasoning-live .reasoning-body');
-    if (!body) {
-      return;
-    }
-    if (renderThinkingNow(body, false)) {
-      maybeScrollBottom();
-    }
+    const streams = Array.from(thinkQueuedTargets);
+    thinkQueuedTargets.clear();
+    streams.forEach(function (s) {
+      if (!document.contains(s)) {
+        return;
+      }
+      const body = s.querySelector('.reasoning-live .reasoning-body');
+      if (!body) {
+        return;
+      }
+      if (renderThinkingNow(body, false)) {
+        maybeScrollBottomIn(s.closest('.chat-pane-conversation'));
+      }
+    });
   });
 }
 
@@ -160,28 +167,33 @@ export function finalizeLiveThinking() {
   });
 }
 
-export function onDelta(msg) {
+export function onDelta(msg, sessionId) {
   if (typeof msg.text !== 'string') {
     return;
   }
+  const conv = getPaneConversation(sessionId);
+  if (!conv) {
+    return;
+  }
   // The stream was torn down by a Stop — ignore stragglers so they can't
-  // resurrect a settled bubble.
-  if (state.stoppedStream) {
+  // resurrect a settled bubble. Scoped per pane: one pane stopping must not
+  // suppress another pane's live stream.
+  if (state.paneStoppedStream[sessionId]) {
     return;
   }
   let el = findMessageEl(msg.messageId);
-  if (!el && state.pendingAssistantId) {
-    el = findMessageEl(state.pendingAssistantId);
+  if (!el && state.panePendingAssistantId[sessionId]) {
+    el = findMessageEl(state.panePendingAssistantId[sessionId]);
   }
   if (!el) {
     // Deltas can land before the host's optimistic bubble does (resume/
     // retry) — synthesize an assistant bubble on demand.
     const bubble = buildMessageEl({ id: msg.messageId, role: 'assistant', time: Date.now(), parts: [] });
     bubble.classList.add('streaming');
-    state.pendingAssistantId = state.pendingAssistantId || msg.messageId;
-    state.conversation.appendChild(bubble);
+    state.panePendingAssistantId[sessionId] = state.panePendingAssistantId[sessionId] || msg.messageId;
+    conv.appendChild(bubble);
     el = bubble;
-    maybeScrollBottom();
+    maybeScrollBottomIn(conv);
   }
   el.classList.add('streaming');
 
@@ -204,7 +216,7 @@ export function onDelta(msg) {
     scheduleStreamRender(stream);
     // Follow the stream while the user is at the bottom: each text delta
     // keeps the view pinned to the answer as it grows.
-    maybeScrollBottom();
+    maybeScrollBottomIn(conv);
     return;
   }
   // A settled message receiving deltas (resume/retry) — patch in place.
@@ -261,9 +273,11 @@ function markStoppedPass(container, includeStreamingOnly) {
   });
 }
 
-// Settle the live pending bubble(s) when a stop lands.
-export function settleStoppedStream() {
-  markStoppedPass(state.conversation, true);
+// Settle the live pending bubble(s) when a stop lands. Scoped to the pane
+// that stopped — a stop in one pane must not settle another pane's stream.
+export function settleStoppedStream(sessionId) {
+  const conv = getPaneConversation(sessionId) || state.conversation;
+  markStoppedPass(conv, true);
 }
 
 // Same pass over freshly-rebuilt history (idle triggers loadHistory right

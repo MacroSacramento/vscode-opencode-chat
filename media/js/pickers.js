@@ -19,34 +19,66 @@ function formatModel(model) {
   return model.modelID;
 }
 
+// Updates EVERY pane's agent/model badges and usage line from its own
+// per-session state. Each pane's badges show that session's agent/model, so
+// this iterates all panes rather than just the focused one. Null-safe: no
+// panes (or a pane missing a badge) is fine.
 export function updateMetaBadges() {
-  const can = state.connected && state.activeSessionId !== null;
-  state.agentPickerBtn.disabled = !can;
-  state.modelPickerBtn.disabled = !can;
-  state.agentBadgeValue.textContent = state.agent ? state.agent : 'default';
-  state.agentPickerBtn.title = 'Agent: ' + (state.agent || 'default');
-  let modelText = state.model ? formatModel(state.model) : '';
-  if (!modelText && state.catalog && state.catalog.defaultModel) {
-    modelText = state.catalog.defaultModel.modelID;
-  }
-  state.modelBadgeValue.textContent = modelText || 'default';
-  state.modelPickerBtn.title = 'Model: ' + (modelText || 'default');
-  renderUsageLine();
+  const can = state.connected;
+  document.querySelectorAll('.chat-pane').forEach(function (p) {
+    const pane = /** @type {HTMLElement} */ (p);
+    const sid = pane.dataset.sessionId;
+    const agent = sid ? state.paneAgent[sid] : null;
+    const model = sid ? state.paneModel[sid] : null;
+    const usage = sid ? state.paneUsage[sid] : null;
+
+    const agentBtn = /** @type {HTMLButtonElement | null} */ (pane.querySelector('#agentPickerBtn'));
+    const modelBtn = /** @type {HTMLButtonElement | null} */ (pane.querySelector('#modelPickerBtn'));
+    const agentValue = /** @type {HTMLElement | null} */ (pane.querySelector('#agentBadgeValue'));
+    const modelValue = /** @type {HTMLElement | null} */ (pane.querySelector('#modelBadgeValue'));
+    const usageLine = /** @type {HTMLElement | null} */ (pane.querySelector('#contextUsageLine'));
+
+    if (agentBtn) {
+      agentBtn.disabled = !can || !sid;
+    }
+    if (modelBtn) {
+      modelBtn.disabled = !can || !sid;
+    }
+    if (agentValue) {
+      agentValue.textContent = agent ? agent : 'default';
+      if (agentBtn) {
+        agentBtn.title = 'Agent: ' + (agent || 'default');
+      }
+    }
+    let modelText = model ? formatModel(model) : '';
+    if (!modelText && state.catalog && state.catalog.defaultModel) {
+      modelText = state.catalog.defaultModel.modelID;
+    }
+    if (modelValue) {
+      modelValue.textContent = modelText || 'default';
+      if (modelBtn) {
+        modelBtn.title = 'Model: ' + (modelText || 'default');
+      }
+    }
+    renderUsageLine(usageLine, usage);
+  });
 }
 
 // Context usage descriptor: a muted caption under the composer bar. Shows
 // tokens in context, % of the context window (when the model reports a
 // limit), and cost in dollars.
-function renderUsageLine() {
-  const line = state.contextUsageLine;
-  if (!state.usage) {
+function renderUsageLine(line, usage) {
+  if (!line) {
+    return;
+  }
+  if (!usage) {
     line.hidden = true;
     line.textContent = '';
     return;
   }
-  const tokens = typeof state.usage.contextTokens === 'number' && isFinite(state.usage.contextTokens) ? state.usage.contextTokens : 0;
-  const cost = typeof state.usage.cost === 'number' && isFinite(state.usage.cost) ? state.usage.cost : 0;
-  const limit = typeof state.usage.contextLimit === 'number' && isFinite(state.usage.contextLimit) && state.usage.contextLimit > 0 ? state.usage.contextLimit : null;
+  const tokens = typeof usage.contextTokens === 'number' && isFinite(usage.contextTokens) ? usage.contextTokens : 0;
+  const cost = typeof usage.cost === 'number' && isFinite(usage.cost) ? usage.cost : 0;
+  const limit = typeof usage.contextLimit === 'number' && isFinite(usage.contextLimit) && usage.contextLimit > 0 ? usage.contextLimit : null;
 
   const bits = ['Context: ' + formatCount(tokens) + ' tokens'];
   if (limit !== null) {
@@ -60,11 +92,19 @@ function renderUsageLine() {
 
 // ── Thinking toggle ─────────────────────────────────────────────────────
 
+// Thinking is a global preference — reflect it on EVERY pane's toggle (the
+// per-pane IDs are not globally unique, so iterate all panes). Null-safe.
 export function updateThinkingToggle() {
-  state.thinkingToggle.classList.toggle('on', state.showThinking);
-  state.thinkingToggle.setAttribute('aria-pressed', state.showThinking ? 'true' : 'false');
-  state.thinkingToggle.title = state.showThinking ? 'Hide model thinking' : 'Show model thinking';
-  state.thinkingToggleValue.textContent = state.showThinking ? 'on' : 'off';
+  document.querySelectorAll('.chat-pane #thinkingToggle').forEach(function (btn) {
+    const el = /** @type {HTMLElement} */ (btn);
+    el.classList.toggle('on', state.showThinking);
+    el.setAttribute('aria-pressed', state.showThinking ? 'true' : 'false');
+    el.title = state.showThinking ? 'Hide model thinking' : 'Show model thinking';
+    const value = /** @type {HTMLElement | null} */ (el.querySelector('#thinkingToggleValue'));
+    if (value) {
+      value.textContent = state.showThinking ? 'on' : 'off';
+    }
+  });
 }
 
 export function toggleThinking() {
@@ -90,8 +130,12 @@ export function toggleThinking() {
 }
 
 export function renderAgentMenu() {
+  if (!state.agentMenu) {
+    return;
+  }
   state.agentMenu.textContent = '';
   agentItems = [];
+  const currentAgent = state.paneAgent[state.activeSessionId];
   const agents = (state.catalog && state.catalog.agents) || [];
   if (agents.length === 0) {
     const empty = document.createElement('div');
@@ -105,7 +149,7 @@ export function renderAgentMenu() {
     row.className = 'menu-item';
     row.dataset.agent = a.name;
 
-    if (a.name === state.agent) {
+    if (a.name === currentAgent) {
       const check = document.createElement('span');
       check.className = 'menu-check';
       check.textContent = '\u2713';
@@ -128,7 +172,7 @@ export function renderAgentMenu() {
     agentItems.push({ name: a.name, row: row });
   });
   const current = agentItems.findIndex(function (it) {
-    return it.name === state.agent;
+    return it.name === currentAgent;
   });
   agentIndex = current >= 0 ? current : 0;
 }
@@ -144,6 +188,9 @@ function highlightAgentItem() {
 }
 
 export function openAgentMenu() {
+  if (!state.agentMenu) {
+    return;
+  }
   closeSlashPopup();
   closeModelMenu();
   if (!state.catalog) {
@@ -156,7 +203,9 @@ export function openAgentMenu() {
 }
 
 export function closeAgentMenu() {
-  state.agentMenu.hidden = true;
+  if (state.agentMenu) {
+    state.agentMenu.hidden = true;
+  }
 }
 
 export function selectAgent(name) {
@@ -164,16 +213,22 @@ export function selectAgent(name) {
   if (!sessionId) {
     return;
   }
-  state.agent = name;
+  state.paneAgent[sessionId] = name;
   updateMetaBadges();
   closeAgentMenu();
   post({ type: 'setAgent', sessionId: sessionId, agent: name });
-  state.input.focus();
+  if (state.input) {
+    state.input.focus();
+  }
 }
 
 export function renderModelMenu() {
+  if (!state.modelMenu) {
+    return;
+  }
   state.modelMenu.textContent = '';
   modelFlat = [];
+  const currentModel = state.paneModel[state.activeSessionId];
   const models = (state.catalog && state.catalog.models) || [];
   if (models.length === 0) {
     const empty = document.createElement('div');
@@ -205,7 +260,7 @@ export function renderModelMenu() {
       row.dataset.provider = group.providerID;
       row.dataset.model = m.modelID;
 
-      const isCurrent = state.model && state.model.providerID === group.providerID && state.model.modelID === m.modelID;
+      const isCurrent = currentModel && currentModel.providerID === group.providerID && currentModel.modelID === m.modelID;
       if (isCurrent) {
         const check = document.createElement('span');
         check.className = 'menu-check';
@@ -223,7 +278,7 @@ export function renderModelMenu() {
     });
   });
   const current = modelFlat.findIndex(function (it) {
-    return state.model && it.providerID === state.model.providerID && it.modelID === state.model.modelID;
+    return currentModel && it.providerID === currentModel.providerID && it.modelID === currentModel.modelID;
   });
   modelIndex = current >= 0 ? current : 0;
 }
@@ -239,6 +294,9 @@ function highlightModelItem() {
 }
 
 export function openModelMenu() {
+  if (!state.modelMenu) {
+    return;
+  }
   closeSlashPopup();
   closeAgentMenu();
   if (!state.catalog) {
@@ -251,7 +309,9 @@ export function openModelMenu() {
 }
 
 export function closeModelMenu() {
-  state.modelMenu.hidden = true;
+  if (state.modelMenu) {
+    state.modelMenu.hidden = true;
+  }
 }
 
 export function selectModel(providerID, modelID) {
@@ -259,11 +319,13 @@ export function selectModel(providerID, modelID) {
   if (!sessionId) {
     return;
   }
-  state.model = { providerID: providerID, modelID: modelID };
+  state.paneModel[sessionId] = { providerID: providerID, modelID: modelID };
   updateMetaBadges();
   closeModelMenu();
   post({ type: 'setModel', sessionId: sessionId, providerID: providerID, modelID: modelID });
-  state.input.focus();
+  if (state.input) {
+    state.input.focus();
+  }
 }
 
 // Keyboard navigation helpers for the picker menus (wired from app.js).

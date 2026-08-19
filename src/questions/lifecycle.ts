@@ -157,23 +157,23 @@ export class QuestionLifecycle {
 
   /**
    * Whether a question/permission event for `sessionId` should surface in the
-   * webview: the active session or any of its descendant (subagent) sessions.
-   * Subagent questions carry the subagent's sessionID, so gating on the active
-   * session alone silently drops them and the agent hangs waiting for an
-   * answer. Walks the parent chain up from the event's session to the active
-   * session. Fails open (treats the session as relevant) when the lookup
+   * webview: any open (pane) session or any of its descendant (subagent)
+   * sessions. Subagent questions carry the subagent's sessionID, so gating on
+   * the open sessions alone silently drops them and the agent hangs waiting
+   * for an answer. Walks the parent chain up from the event's session to any
+   * open session. Fails open (treats the session as relevant) when the lookup
    * errors, so a transient API failure can't strand the agent.
    */
   private async isRelevantSession(sessionId: string): Promise<boolean> {
-    const active = this.ctx.getActiveSessionId();
-    if (active === undefined || sessionId === active) {
+    const open = this.ctx.getOpenSessionIds();
+    if (open.includes(sessionId)) {
       return true;
     }
     const visited = new Set<string>();
     let current: string | undefined = sessionId;
     while (current !== undefined && !visited.has(current)) {
       visited.add(current);
-      if (current === active) {
+      if (open.includes(current)) {
         return true;
       }
       try {

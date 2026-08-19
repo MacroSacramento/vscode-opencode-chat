@@ -1,9 +1,10 @@
 import { state } from './state.js';
-import { post, maybeScrollBottom, showToast } from './utils.js';
+import { post, maybeScrollBottomIn, showToast } from './utils.js';
 import { escapeHtml, linkify } from './markdown.js';
 import { updateEmptyStates } from './sessions.js';
 import { updateMetaBadges, openAgentMenu, openModelMenu, showHelp } from './pickers.js';
 import { settleStoppedStream, finalizeLiveThinking, renderStreamNow } from './streaming.js';
+import { getFocusedSessionId, getPaneConversation } from './layout.js';
 
 // Built-in slash commands. `local: true` are handled entirely in the
 // webview; the rest map to the host's `nativeCommand` protocol.
@@ -36,7 +37,22 @@ let atFilter = '';
 
 // ── Connection / empty states / composer ─────────────────────────────────
 
+// Mirrors the focused pane's per-pane flags onto the legacy global fields
+// (busy/stopping/stoppedStream) that updateComposerState and the app.js error
+// handler read. Kept in sync on every focus change and busy/stop transition.
+function syncFocusedMirrors() {
+  const sid = state.activeSessionId;
+  state.busy = sid ? !!state.paneBusy[sid] : false;
+  state.stopping = sid ? !!state.paneStopping[sid] : false;
+  state.stoppedStream = sid ? !!state.paneStoppedStream[sid] : false;
+}
+
 export function updateComposerState() {
+  // No pane focused → no composer DOM to update (refs are null).
+  if (!state.input || !state.sendBtn) {
+    return;
+  }
+  syncFocusedMirrors();
   const canType = state.connected;
   const textEmpty = state.input.value.trim() === '';
   const showStop = state.busy && !state.stopping;
@@ -63,16 +79,23 @@ export function updateComposerState() {
   updateMetaBadges();
 }
 
-export function setBusy(busy) {
-  state.busy = busy;
-  document.querySelectorAll('.message .typing').forEach(function (n) {
+export function setBusy(busy, sessionId) {
+  const sid = sessionId || state.activeSessionId;
+  if (sid) {
+    state.paneBusy[sid] = busy;
+  }
+  syncFocusedMirrors();
+  // Typing dots are scoped to the pane that changed state.
+  const conv = getPaneConversation(sid) || state.conversation;
+  conv.querySelectorAll('.message .typing').forEach(function (n) {
     n.hidden = true;
   });
   if (busy) {
     // A fresh stream is running — any prior stop state is stale.
-    state.stopping = false;
-    state.stoppedStream = false;
-    const assistants = state.conversation.querySelectorAll('.message[data-role="assistant"]');
+    state.paneStopping[sid] = false;
+    state.paneStoppedStream[sid] = false;
+    syncFocusedMirrors();
+    const assistants = conv.querySelectorAll('.message[data-role="assistant"]');
     if (assistants.length > 0) {
       const typing = assistants[assistants.length - 1].querySelector('.typing');
       if (typing) {
@@ -82,24 +105,25 @@ export function setBusy(busy) {
   } else {
     // The stream settled. If this unwind was user-initiated, collapse the
     // pending bubble cleanly before finalizing reasoning.
-    if (state.stopping) {
-      settleStoppedStream();
-      state.stopping = false;
+    if (state.paneStopping[sid]) {
+      settleStoppedStream(sid);
+      state.paneStopping[sid] = false;
+      syncFocusedMirrors();
     }
     // Stream finished — any live thinking block is now a settled thought.
     finalizeLiveThinking();
     // Reasoning is done: pin to the bottom so the answer (or final state)
     // is visible — only when the user is already at the bottom.
-    maybeScrollBottom();
+    maybeScrollBottomIn(conv);
     // No more deltas are coming once the stream settles — flush any text
     // the render throttle skipped so the final answer is fully rendered.
-    document.querySelectorAll('[data-part="stream"]').forEach(function (stream) {
+    conv.querySelectorAll('[data-part="stream"]').forEach(function (stream) {
       const acc = stream._accText || '';
       if (acc.length > (stream._lastRenderedLen || 0)) {
         renderStreamNow(stream, true);
       }
     });
-    maybeScrollBottom();
+    maybeScrollBottomIn(conv);
   }
   updateComposerState();
 }
@@ -108,6 +132,9 @@ export function setBusy(busy) {
 
 export function autoGrow() {
   const input = state.input;
+  if (!input) {
+    return;
+  }
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 140) + 'px';
 }
@@ -119,9 +146,12 @@ export function insertContext(text, label) {
   if (typeof text !== 'string' || text === '') {
     return;
   }
+  const input = state.input;
+  if (!input) {
+    return;
+  }
   closeSlashPopup();
   closeAtPopup();
-  const input = state.input;
   const focused = document.activeElement === input;
   const start = focused && input.selectionStart != null ? input.selectionStart : input.value.length;
   const end = focused && input.selectionEnd != null ? input.selectionEnd : start;
@@ -135,8 +165,13 @@ export function insertContext(text, label) {
 }
 
 export function send() {
+  if (!state.input) {
+    return;
+  }
   const text = state.input.value.trim();
-  if (!state.connected || state.busy || !text) {
+  const sessionId = getFocusedSessionId();
+  const busy = sessionId ? !!state.paneBusy[sessionId] : false;
+  if (!state.connected || busy || !text) {
     return;
   }
   // Extract @-mentions typed at fresh positions (start of input or after
@@ -194,12 +229,16 @@ export function send() {
 // Posts the host's abort command; a brief disabled "Stopping…" state keeps
 // the user from double-firing while the stream unwinds.
 export function stop() {
-  if (!state.connected || !state.busy || state.stopping || !state.activeSessionId) {
+  const sessionId = getFocusedSessionId();
+  const busy = sessionId ? !!state.paneBusy[sessionId] : false;
+  const stopping = sessionId ? !!state.paneStopping[sessionId] : false;
+  if (!state.connected || !busy || stopping || !sessionId) {
     return;
   }
-  state.stopping = true;
-  state.stoppedStream = true;
-  post({ type: 'nativeCommand', sessionId: state.activeSessionId, command: 'abort' });
+  state.paneStopping[sessionId] = true;
+  state.paneStoppedStream[sessionId] = true;
+  syncFocusedMirrors();
+  post({ type: 'nativeCommand', sessionId: sessionId, command: 'abort' });
   updateComposerState();
 }
 
@@ -255,6 +294,9 @@ function rebuildSlashItems() {
 }
 
 function renderSlashPopup() {
+  if (!state.slashPopup) {
+    return;
+  }
   state.slashPopup.textContent = '';
   if (slashItems.length === 0) {
     const empty = document.createElement('div');
@@ -283,6 +325,9 @@ function renderSlashPopup() {
 }
 
 function openSlashPopup(filter) {
+  if (!state.slashPopup) {
+    return;
+  }
   closeAtPopup();
   slashFilter = filter || '';
   rebuildSlashItems();
@@ -291,7 +336,9 @@ function openSlashPopup(filter) {
 }
 
 export function closeSlashPopup() {
-  state.slashPopup.hidden = true;
+  if (state.slashPopup) {
+    state.slashPopup.hidden = true;
+  }
   slashItems = [];
   slashIndex = -1;
   slashFilter = '';
@@ -299,6 +346,9 @@ export function closeSlashPopup() {
 }
 
 function updateSlashHighlight() {
+  if (!state.slashPopup) {
+    return;
+  }
   state.slashPopup.querySelectorAll('.slash-row').forEach(function (row) {
     row.classList.toggle('active', Number(row.dataset.index) === slashIndex);
   });
@@ -457,6 +507,9 @@ function rebuildAtItems() {
 }
 
 export function renderAtPopup() {
+  if (!state.atPopup) {
+    return;
+  }
   // Rebuild from live state so late-arriving files/catalog show up when the
   // host posts while the popup is open.
   rebuildAtItems();
@@ -495,6 +548,9 @@ export function renderAtPopup() {
 }
 
 function openAtPopup(filter) {
+  if (!state.atPopup) {
+    return;
+  }
   closeSlashPopup();
   atFilter = filter || '';
   renderAtPopup();
@@ -505,13 +561,18 @@ function openAtPopup(filter) {
 }
 
 export function closeAtPopup() {
-  state.atPopup.hidden = true;
+  if (state.atPopup) {
+    state.atPopup.hidden = true;
+  }
   atItems = [];
   atIndex = -1;
   atFilter = '';
 }
 
 function updateAtHighlight() {
+  if (!state.atPopup) {
+    return;
+  }
   state.atPopup.querySelectorAll('.slash-row').forEach(function (row) {
     row.classList.toggle('active', Number(row.dataset.index) === atIndex);
   });
@@ -571,7 +632,8 @@ function flashSessionList() {
 
 // ── Native command results ───────────────────────────────────────────────
 
-export function appendNativeResult(msg) {
+export function appendNativeResult(msg, sessionId) {
+  const conv = getPaneConversation(sessionId) || state.conversation;
   const el = document.createElement('div');
   el.className = 'message native-message';
   el.dataset.role = 'system';
@@ -592,7 +654,7 @@ export function appendNativeResult(msg) {
   content.appendChild(text);
   el.appendChild(content);
 
-  state.conversation.appendChild(el);
-  maybeScrollBottom();
+  conv.appendChild(el);
+  maybeScrollBottomIn(conv);
   updateEmptyStates();
 }

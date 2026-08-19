@@ -20,6 +20,20 @@ export const state = {
   subagentsVisible: false,
   pendingPermission: null,
   pendingQuestion: null,
+  // Per-pane state maps (keyed by sessionId). The multi-pane grid routes
+  // every session-scoped message to its pane; these maps hold the per-session
+  // values so one pane's stream/busy/pending state can't leak into another's.
+  paneBusy: {},
+  paneStopping: {},
+  paneStoppedStream: {},
+  panePendingAssistantId: {},
+  panePendingUserEl: {},
+  paneAgent: {},
+  paneModel: {},
+  paneUsage: {},
+  paneSubagents: {},
+  panePendingPermission: {},
+  panePendingQuestion: {},
   // DOM refs (filled in init)
   app: null,
   disconnected: null,
