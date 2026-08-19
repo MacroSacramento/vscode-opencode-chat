@@ -14,3 +14,4 @@ media/js/
 AGENTS.md
 .DS_Store
 *.vsix
+.playwright-mcp/
