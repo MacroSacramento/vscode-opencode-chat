@@ -176,7 +176,8 @@
     "vscode:prepublish": "npm run build"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.18.18"
+    "@opencode-ai/sdk": "^1.18.18",
+    "prismjs": "^1.30.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

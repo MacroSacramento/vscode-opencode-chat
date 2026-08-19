@@ -9,7 +9,7 @@
   --oc-radius-md: 8px;
   --oc-radius-lg: 12px;
   --oc-font: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-  --oc-mono: var(--vscode-editor-font-family, var(--vscode-font-family, ui-monospace, Menlo, Consolas, monospace));
+  --oc-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace;
   --oc-mono-size: var(--vscode-editor-font-size, 12px);
   --oc-border: var(--vscode-sideBar-border, var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.25)));
   --oc-text-subtle: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
@@ -611,11 +611,24 @@ code {
   margin: 0;
 }
 
+/* Nested lists inside a list item — collapse the trailing gap so the item
+   spacing (2px on the li) owns the rhythm. */
+.markdown li > ul,
+.markdown li > ol {
+  margin-bottom: 0;
+}
+
 .markdown blockquote {
   margin: 0 0 8px;
   padding: 2px 12px;
   border-left: 3px solid var(--vscode-textBlockQuote-border, var(--oc-border));
   color: var(--oc-text-subtle);
+}
+
+/* Multi-line quotes wrap their paragraphs — tighten the default 8px bottom
+   margin so stacked <p>s read as one flowing quote. */
+.markdown blockquote p {
+  margin: 2px 0;
 }
 
 .markdown hr {
@@ -641,6 +654,64 @@ code {
   border-radius: var(--oc-radius-sm);
 }
 
+/* ── Markdown tables ────────────────────────────────────────────────────── */
+
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid var(--oc-border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.markdown thead th {
+  font-weight: 600;
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-sideBar-dropBackground, var(--vscode-editorWidget-background)));
+}
+
+/* Very subtle zebra striping — same neutral overlay family as the header,
+   so it stays quiet in light and dark themes alike. */
+.markdown tbody tr:nth-child(odd) td {
+  background: var(--vscode-sideBar-dropBackground, var(--vscode-toolbar-hoverBackground, transparent));
+}
+
+/* ── Task lists ─────────────────────────────────────────────────────────── */
+
+.markdown li.task {
+  list-style: none;
+}
+
+.markdown li.task input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  margin: 0 6px 0 0;
+  vertical-align: middle;
+  accent-color: var(--vscode-checkbox-background, var(--vscode-focusBorder, var(--vscode-foreground)));
+  cursor: default;
+  opacity: 0.85;
+}
+
+.markdown li.task input[type="checkbox"]:checked {
+  opacity: 1;
+}
+
+/* Item text is a bare text node — there is no wrapper to style per item, so
+   a checked box dims and strikes the whole <li> instead. `:has` is a
+   progressive enhancement; the plain input:checked rule above still keeps
+   checked boxes clearly visible where it is unsupported. */
+.markdown li.task:has(input[type="checkbox"]:checked) {
+  color: var(--oc-text-subtle);
+  text-decoration: line-through;
+}
+
 .code-block {
   margin: 8px 0 12px;
   border-radius: var(--oc-radius-md);
@@ -649,21 +720,82 @@ code {
   overflow: hidden;
 }
 
+/* Code block header bar — language label + copy button. Always rendered,
+   even without a lang label; the head owns the bottom border the old
+   block-level .code-lang carried, so the bar reads the same with or
+   without a label. */
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 2px 10px;
+  border-bottom: 1px solid var(--oc-border);
+}
+
 .code-lang {
-  padding: 3px 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  line-height: 1.6;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--oc-text-subtle);
-  border-bottom: 1px solid var(--oc-border);
-  background: rgba(128, 128, 128, 0.06);
+}
+
+/* Copy button — quiet until hover, so code stays the hero of the block. */
+.code-copy {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--oc-text-subtle);
+  background: transparent;
+  border: none;
+  border-radius: var(--oc-radius-sm);
+  cursor: pointer;
+  outline: none;
+  box-shadow: none;
+  opacity: 0.85;
+  transition: opacity 0.1s ease, background 0.1s ease, color 0.1s ease;
+}
+
+.code-copy:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.12));
+  color: var(--vscode-foreground, var(--vscode-editor-foreground));
+  opacity: 1;
+}
+
+.code-copy:active {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+.code-copy:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, var(--oc-focus));
+  outline-offset: -1px;
+}
+
+/* "Copied" success state — JS swaps the label; green tint, not loud. */
+.code-copy.copied {
+  color: var(--vscode-terminal-ansiGreen, var(--vscode-charts-green, var(--oc-text-subtle)));
+  opacity: 1;
 }
 
 .code-block pre {
   margin: 0;
   padding: 8px 12px;
   overflow-x: auto;
+  /* Deterministic mono: --oc-mono is a fixed mono stack (no editor-font var,
+     which can resolve to a serif UI font). Code must never render serif. */
+  font-family: var(--oc-mono);
 }
 
 .code-block code {
@@ -673,6 +805,105 @@ code {
   color: var(--vscode-editor-foreground, var(--vscode-foreground));
   white-space: pre;
   tab-size: 2;
+}
+
+/* ── Prism token theme (syntax highlighting) ────────────────────────────── */
+/* Every color resolves from --vscode-* tokens so highlighted code stays
+   readable on --oc-snippet-bg in light, dark and high-contrast themes.
+   Each rule falls back through a --vscode-charts-* accent to a semantic
+   token and finally to the editor foreground — never a literal color. The
+   renderer puts the language class on this same <code> element, so
+   `code.language-*` is covered by the `.code-block pre code` scope. */
+
+.code-block pre code .token {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* Comment family — muted, italic, never competing with code. */
+.code-block pre code .token.comment,
+.code-block pre code .token.prolog,
+.code-block pre code .token.doctype,
+.code-block pre code .token.cdata {
+  color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
+  font-style: italic;
+}
+
+/* Keywords, tags, control words — blue family. */
+.code-block pre code .token.keyword,
+.code-block pre code .token.tag,
+.code-block pre code .token.atrule,
+.code-block pre code .token.rule,
+.code-block pre code .token.directive,
+.code-block pre code .token.selector,
+.code-block pre code .token.entity,
+.code-block pre code .token.placeholder {
+  color: var(--vscode-charts-blue, var(--vscode-textLink-foreground, var(--vscode-foreground)));
+}
+
+/* Strings and attribute names — warm yellow, echoing editor strings. */
+.code-block pre code .token.string,
+.code-block pre code .token.attr-name,
+.code-block pre code .token.char,
+.code-block pre code .token.interpolation {
+  color: var(--vscode-charts-yellow, var(--vscode-textPreformat-foreground, var(--vscode-foreground)));
+}
+
+/* Numbers, booleans, constants, attribute values — green family. */
+.code-block pre code .token.number,
+.code-block pre code .token.boolean,
+.code-block pre code .token.constant,
+.code-block pre code .token.attr-value,
+.code-block pre code .token.symbol {
+  color: var(--vscode-charts-green, var(--vscode-terminal-ansiGreen, var(--vscode-foreground)));
+}
+
+/* Functions, classes, built-ins — purple family. */
+.code-block pre code .token.function,
+.code-block pre code .token.class-name,
+.code-block pre code .token.builtin,
+.code-block pre code .token.method {
+  color: var(--vscode-charts-purple, var(--vscode-foreground));
+}
+
+/* Operators and punctuation stay at the code foreground — quiet and
+   neutral so the accent families carry the emphasis. */
+.code-block pre code .token.operator,
+.code-block pre code .token.punctuation {
+  color: inherit;
+}
+
+/* Property names, variables, parameters — neutral foreground so they never
+   compete with the accent families. */
+.code-block pre code .token.property,
+.code-block pre code .token.variable,
+.code-block pre code .token.parameter {
+  color: var(--vscode-foreground, var(--vscode-editor-foreground));
+}
+
+/* Regex and `!important` — red family. */
+.code-block pre code .token.regex,
+.code-block pre code .token.important {
+  color: var(--vscode-charts-red, var(--vscode-errorForeground, var(--vscode-foreground)));
+}
+
+.code-block pre code .token.important {
+  font-weight: 600;
+}
+
+/* Diff tokens — green/red semantics, matching the charts family. */
+.code-block pre code .token.inserted {
+  color: var(--vscode-charts-green, var(--vscode-terminal-ansiGreen, var(--vscode-foreground)));
+}
+
+.code-block pre code .token.deleted {
+  color: var(--vscode-errorForeground, var(--vscode-charts-red, var(--vscode-foreground)));
+}
+
+/* Links embedded in code — link blue, underlined like any other link. */
+.code-block pre code .token.url {
+  color: var(--vscode-textLink-foreground, var(--vscode-foreground));
+  text-decoration: underline;
 }
 
 /* ── Reasoning (dimmed, collapsible) ────────────────────────────────────── */

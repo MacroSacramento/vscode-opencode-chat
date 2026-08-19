@@ -59,6 +59,7 @@ import {
   showQuestionCard,
   hideQuestionCard,
 } from './cards.js';
+import { initCodeCopy } from './copy.js';
 
 function $(id) {
   return document.getElementById(id);
@@ -223,6 +224,10 @@ function init() {
   state.modelMenu = $('modelMenu');
   state.helpOverlay = $('helpOverlay');
   state.helpList = $('helpList');
+
+  // Delegated listener for code-block copy buttons (survives streaming
+  // re-renders; wired once, never re-wired).
+  initCodeCopy();
 
   // Restore the thinking preference; off by default. Storage can be
   // unavailable in some webview contexts — fall back to the default rather

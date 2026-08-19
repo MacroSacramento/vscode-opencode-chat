@@ -13,6 +13,8 @@ interface Element {
   _accThinking?: string;
   _lastRenderAt?: number;
   _lastRenderedLen?: number;
+  // copy.js stores the pending "Copied" revert timer on the button element.
+  _copyTimer?: ReturnType<typeof setTimeout>;
   // querySelector/querySelectorAll return `Element`, but every match here is
   // a real HTMLElement in the chat shell — expose the props the code uses.
   hidden: boolean;
