@@ -1140,6 +1140,15 @@ code {
   opacity: 0.8;
 }
 
+/* Context usage descriptor: muted caption under the composer bar. */
+.context-usage-line {
+  margin-top: 4px;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--oc-text-subtle);
+  opacity: 0.8;
+}
+
 /* ── Disconnected view ──────────────────────────────────────────────────── */
 
 .disconnected {

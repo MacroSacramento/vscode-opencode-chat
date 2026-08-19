@@ -123,6 +123,11 @@ function route(msg) {
       if (msg.sessionId === state.activeSessionId) {
         state.agent = typeof msg.agent === 'string' ? msg.agent : null;
         state.model = msg.model && typeof msg.model === 'object' ? { providerID: msg.model.providerID, modelID: msg.model.modelID } : null;
+        // Only update usage when present: setAgent/setModel echoes omit it,
+        // and nulling it here would wipe the value between updates.
+        if (msg.usage) {
+          state.usage = msg.usage;
+        }
         updateMetaBadges();
         if (!state.agentMenu.hidden) {
           renderAgentMenu();
@@ -208,6 +213,7 @@ function init() {
   state.modelBadgeValue = $('modelBadgeValue');
   state.thinkingToggle = $('thinkingToggle');
   state.thinkingToggleValue = $('thinkingToggleValue');
+  state.contextUsageLine = $('contextUsageLine');
   state.subagentsToggle = $('subagentsToggle');
   state.permissionCard = $('permissionCard');
   state.questionCard = $('questionCard');

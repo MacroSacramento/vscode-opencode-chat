@@ -65,6 +65,14 @@ export interface CatalogModel {
   providerName: string;
   modelID: string;
   modelName: string;
+  contextLimit?: number;
+}
+
+/** Session usage stats sent with `sessionMeta`. */
+export interface SessionUsage {
+  cost: number;
+  contextTokens: number;
+  contextLimit?: number;
 }
 
 /**

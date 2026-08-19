@@ -3,7 +3,7 @@ import { relativeTime, showProgress, hideProgress } from './utils.js';
 import { clearConversation } from './messages.js';
 import { hidePermissionCard, hideQuestionCard } from './cards.js';
 import { closeSlashPopup, updateComposerState } from './composer.js';
-import { closeAgentMenu, closeModelMenu } from './pickers.js';
+import { closeAgentMenu, closeModelMenu, updateMetaBadges } from './pickers.js';
 
 // ── Session list ─────────────────────────────────────────────────────────
 
@@ -92,6 +92,7 @@ export function applySessions(msg) {
     state.stoppedStream = false;
     state.agent = null;
     state.model = null;
+    state.usage = null;
     state.subagents = [];
     hidePermissionCard();
     hideQuestionCard();
@@ -99,6 +100,7 @@ export function applySessions(msg) {
     closeSlashPopup();
     closeAgentMenu();
     closeModelMenu();
+    updateMetaBadges();
   }
   updateSubagentsToggle();
   updateEmptyStates();
@@ -116,12 +118,14 @@ export function removeSession(sessionId) {
     state.stoppedStream = false;
     state.agent = null;
     state.model = null;
+    state.usage = null;
     state.subagents = [];
     hidePermissionCard();
     hideQuestionCard();
     setSubagentsToggle(false);
     clearConversation();
     hideProgress();
+    updateMetaBadges();
   }
   renderSessionList();
   updateSubagentsToggle();

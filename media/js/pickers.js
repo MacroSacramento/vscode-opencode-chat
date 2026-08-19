@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { post, maybeScrollBottom } from './utils.js';
 import { updateLiveThinking } from './streaming.js';
 import { closeSlashPopup, NATIVE_COMMANDS } from './composer.js';
+import { formatCount } from './parts.js';
 
 // Picker menu navigation state.
 let agentItems = [];
@@ -15,7 +16,7 @@ function formatModel(model) {
   if (!model) {
     return '';
   }
-  return model.providerID + '/' + model.modelID;
+  return model.modelID;
 }
 
 export function updateMetaBadges() {
@@ -26,10 +27,35 @@ export function updateMetaBadges() {
   state.agentPickerBtn.title = 'Agent: ' + (state.agent || 'default');
   let modelText = state.model ? formatModel(state.model) : '';
   if (!modelText && state.catalog && state.catalog.defaultModel) {
-    modelText = state.catalog.defaultModel.providerID + '/' + state.catalog.defaultModel.modelID;
+    modelText = state.catalog.defaultModel.modelID;
   }
   state.modelBadgeValue.textContent = modelText || 'default';
   state.modelPickerBtn.title = 'Model: ' + (modelText || 'default');
+  renderUsageLine();
+}
+
+// Context usage descriptor: a muted caption under the composer bar. Shows
+// tokens in context, % of the context window (when the model reports a
+// limit), and cost in dollars.
+function renderUsageLine() {
+  const line = state.contextUsageLine;
+  if (!state.usage) {
+    line.hidden = true;
+    line.textContent = '';
+    return;
+  }
+  const tokens = typeof state.usage.contextTokens === 'number' && isFinite(state.usage.contextTokens) ? state.usage.contextTokens : 0;
+  const cost = typeof state.usage.cost === 'number' && isFinite(state.usage.cost) ? state.usage.cost : 0;
+  const limit = typeof state.usage.contextLimit === 'number' && isFinite(state.usage.contextLimit) && state.usage.contextLimit > 0 ? state.usage.contextLimit : null;
+
+  const bits = ['Context: ' + formatCount(tokens) + ' tokens'];
+  if (limit !== null) {
+    bits.push(Math.round((tokens / limit) * 100) + '% used');
+  }
+  bits.push('$' + cost.toFixed(2) + ' spent');
+
+  line.textContent = bits.join(' \u00b7 ');
+  line.hidden = false;
 }
 
 // ── Thinking toggle ─────────────────────────────────────────────────────

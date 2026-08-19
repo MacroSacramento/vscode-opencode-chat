@@ -1,5 +1,5 @@
 import { getClient, isConnected } from './opencodeClient';
-import type { CatalogAgent, CatalogCommand, CatalogModel, ProviderContext } from './webview/types';
+import type { CatalogAgent, CatalogCommand, CatalogModel, ProviderContext, SessionUsage } from './webview/types';
 
 /**
  * Owns the command/agent/model catalog plus the per-session agent/model
@@ -10,6 +10,8 @@ import type { CatalogAgent, CatalogCommand, CatalogModel, ProviderContext } from
 export class MetaState {
   private readonly agentState = new Map<string, string>();
   private readonly modelState = new Map<string, { providerID: string; modelID: string }>();
+  private readonly contextLimitByModel = new Map<string, number>();
+  private defaultModel?: { providerID: string; modelID: string };
 
   constructor(private readonly ctx: ProviderContext) {}
 
@@ -49,7 +51,11 @@ export class MetaState {
             providerName: provider.name,
             modelID,
             modelName: model.name || model.id,
+            ...(model.limit?.context !== undefined ? { contextLimit: model.limit.context } : {}),
           });
+          if (model.limit?.context !== undefined) {
+            this.contextLimitByModel.set(`${provider.id}/${modelID}`, model.limit.context);
+          }
         }
       }
       let defaultModel: { providerID: string; modelID: string } | undefined;
@@ -58,6 +64,7 @@ export class MetaState {
       if (firstProvider !== undefined && defaults !== undefined) {
         defaultModel = { providerID: firstProvider, modelID: defaults[firstProvider] };
       }
+      this.defaultModel = defaultModel;
       this.ctx.post({
         type: 'catalog',
         commands,
@@ -97,11 +104,24 @@ export class MetaState {
       } else {
         this.modelState.delete(sessionId);
       }
+      const model = session.model ?? this.defaultModel;
+      const modelID = model ? ('id' in model ? model.id : model.modelID) : undefined;
+      const contextLimit = model && modelID !== undefined ? this.contextLimitByModel.get(`${model.providerID}/${modelID}`) : undefined;
+      const tokens = session.tokens;
+      const usage: SessionUsage | undefined =
+        session.cost !== undefined || tokens !== undefined
+          ? {
+              cost: session.cost ?? 0,
+              contextTokens: tokens ? tokens.input + tokens.cache.read : 0,
+              ...(contextLimit !== undefined ? { contextLimit } : {}),
+            }
+          : undefined;
       this.ctx.post({
         type: 'sessionMeta',
         sessionId,
         ...(session.agent !== undefined ? { agent: session.agent } : {}),
         ...(session.model !== undefined ? { model: { providerID: session.model.providerID, modelID: session.model.id } } : {}),
+        ...(usage !== undefined ? { usage } : {}),
       });
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
