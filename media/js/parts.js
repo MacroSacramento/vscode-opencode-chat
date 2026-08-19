@@ -265,8 +265,8 @@ export function renderPart(part) {
       const summary = document.createElement('summary');
       summary.textContent = 'Reasoning';
       const body = document.createElement('div');
-      body.className = 'reasoning-body';
-      body.textContent = part.text || '';
+      body.className = 'reasoning-body markdown';
+      body.innerHTML = renderMarkdown(part.text || '');
       details.appendChild(summary);
       details.appendChild(body);
       return details;

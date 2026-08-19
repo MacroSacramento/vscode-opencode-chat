@@ -61,6 +61,50 @@ function scheduleStreamRender(target) {
 
 // ── Live thinking (streamed reasoning) ──────────────────────────────────
 
+let thinkRenderQueued = false;
+let thinkQueuedTarget = null;
+
+// Per-stream reasoning render throttle, mirroring the text path: the body
+// element carries `_lastThinkRenderAt` (ms of last actual render) and
+// `_lastThinkRenderedLen` (length of `_accThinking` then). Rapid reasoning
+// deltas skip re-rendering until either 50ms pass or 400 more characters
+// accumulate — reasoning can be huge raw JSON/tool output, so the markdown
+// re-render must not run on every delta.
+function renderThinkingNow(body, force) {
+  const acc = body._accThinking || '';
+  const now = performance.now();
+  if (!force && now - (body._lastThinkRenderAt || 0) < 50 && acc.length - (body._lastThinkRenderedLen || 0) < 400) {
+    return false;
+  }
+  body.innerHTML = renderMarkdown(acc);
+  body._lastThinkRenderAt = now;
+  body._lastThinkRenderedLen = acc.length;
+  return true;
+}
+
+function scheduleThinkingRender(stream) {
+  thinkQueuedTarget = stream;
+  if (thinkRenderQueued) {
+    return;
+  }
+  thinkRenderQueued = true;
+  requestAnimationFrame(function () {
+    thinkRenderQueued = false;
+    const s = thinkQueuedTarget;
+    thinkQueuedTarget = null;
+    if (!s || !document.contains(s)) {
+      return;
+    }
+    const body = s.querySelector('.reasoning-live .reasoning-body');
+    if (!body) {
+      return;
+    }
+    if (renderThinkingNow(body, false)) {
+      maybeScrollBottom();
+    }
+  });
+}
+
 function createLiveThinking() {
   const block = document.createElement('div');
   block.className = 'reasoning reasoning-live';
@@ -69,7 +113,7 @@ function createLiveThinking() {
   summary.className = 'reasoning-summary';
   summary.textContent = 'Thinking\u2026';
   const body = document.createElement('div');
-  body.className = 'reasoning-body';
+  body.className = 'reasoning-body markdown';
   block.appendChild(summary);
   block.appendChild(body);
   return block;
@@ -96,7 +140,8 @@ export function updateLiveThinking(stream) {
   }
   const body = live.querySelector('.reasoning-body');
   if (body && acc !== '') {
-    body.textContent = acc;
+    body._accThinking = acc;
+    scheduleThinkingRender(stream);
   }
   if (state.showThinking) {
     const placeholder = stream.querySelector('.thinking');
@@ -168,7 +213,7 @@ export function onDelta(msg) {
     if (body) {
       const base = body._accThinking || body.textContent || '';
       body._accThinking = msg.replace ? msg.text : base + msg.text;
-      body.textContent = body._accThinking;
+      body.innerHTML = renderMarkdown(body._accThinking);
       if (state.showThinking) {
         const details = body.closest('details');
         if (details) {

@@ -948,8 +948,75 @@ code {
   padding: 6px 10px;
   border-left: 2px solid var(--oc-border);
   color: var(--oc-text-subtle);
-  white-space: pre-wrap;
   opacity: 0.85;
+}
+
+/* Markdown-rendered reasoning — same element types as chat text, compact and
+   subordinate to the main answer. Scoped under .reasoning, which covers both
+   the settled <details> body and the live thinking body (the live block
+   carries both `reasoning` and `reasoning-live` classes). Dimming comes from
+   the body's own color + opacity above; inner elements get color overrides
+   only, never extra opacity, so code blocks don't double-dim. */
+.reasoning .reasoning-body.markdown p {
+  margin: 0 0 4px;
+}
+
+.reasoning .reasoning-body.markdown h1,
+.reasoning .reasoning-body.markdown h2,
+.reasoning .reasoning-body.markdown h3,
+.reasoning .reasoning-body.markdown h4 {
+  margin: 8px 0 4px;
+  font-size: 11px;
+}
+
+.reasoning .reasoning-body.markdown ul,
+.reasoning .reasoning-body.markdown ol {
+  margin: 0 0 4px;
+  padding-left: 16px;
+}
+
+.reasoning .reasoning-body.markdown li {
+  margin: 1px 0;
+}
+
+.reasoning .reasoning-body.markdown blockquote {
+  margin: 0 0 4px;
+  padding: 1px 10px;
+}
+
+.reasoning .reasoning-body.markdown hr {
+  margin: 8px 0;
+}
+
+/* Tables — inherit the global table look, tightened for the narrower
+   reasoning column (cells already carry overflow-wrap: anywhere). */
+.reasoning .reasoning-body.markdown table {
+  font-size: 11px;
+}
+
+.reasoning .reasoning-body.markdown th,
+.reasoning .reasoning-body.markdown td {
+  padding: 2px 6px;
+}
+
+/* Code blocks inside reasoning — smaller scale, dimmer edge, still fully
+   interactive (the copy button keeps its hover/click affordances). */
+.reasoning .reasoning-body.markdown .code-block {
+  margin: 4px 0 8px;
+  border-color: var(--vscode-editorWidget-border, var(--oc-border));
+}
+
+.reasoning .reasoning-body.markdown .code-block pre,
+.reasoning .reasoning-body.markdown .code-block code {
+  font-size: 11px;
+}
+
+.reasoning .reasoning-body.markdown .code-block pre {
+  padding: 4px 8px;
+}
+
+.reasoning .reasoning-body.markdown .code-head {
+  padding: 1px 4px 1px 8px;
 }
 
 /* Live thinking block — reasoning streamed into the pending bubble. Reuses
