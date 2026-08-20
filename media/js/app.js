@@ -226,8 +226,20 @@ function route(msg) {
     case 'insertContext':
       insertContext(typeof msg.text === 'string' ? msg.text : '', typeof msg.label === 'string' ? msg.label : '');
       break;
+    case 'sessionPanelCollapsed':
+      applySessionPanelCollapsed(msg.collapsed === true);
+      break;
     default:
       break;
+  }
+}
+
+// Applies the session-panel collapsed state (class + toggle title). Callers
+// pass the host's persisted value on restore, or the new value on toggle.
+function applySessionPanelCollapsed(collapsed) {
+  document.body.classList.toggle('collapsed', collapsed);
+  if (state.sessionToggle) {
+    state.sessionToggle.title = collapsed ? 'Show session list' : 'Hide session list';
   }
 }
 
@@ -297,8 +309,9 @@ function init() {
   });
 
   state.sessionToggle.addEventListener('click', function () {
-    const collapsed = document.body.classList.toggle('collapsed');
-    state.sessionToggle.title = collapsed ? 'Show session list' : 'Hide session list';
+    const collapsed = !document.body.classList.contains('collapsed');
+    applySessionPanelCollapsed(collapsed);
+    post({ type: 'setSessionPanelCollapsed', collapsed });
   });
 
   state.sessionList.addEventListener('click', function (e) {

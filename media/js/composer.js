@@ -620,6 +620,9 @@ function flashSessionList() {
   const list = state.sessionList;
   document.body.classList.remove('collapsed');
   state.sessionToggle.title = 'Hide session list';
+  // Un-collapsing here is a real state change — persist it so the panel stays
+  // open on the next window, matching the toggle's own persistence.
+  post({ type: 'setSessionPanelCollapsed', collapsed: false });
   list.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   list.classList.remove('flash');
   void list.offsetWidth; // restart the animation

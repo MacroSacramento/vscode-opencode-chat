@@ -115,11 +115,19 @@ let dragSessionId = null;
 let dragSourceEl = null;
 let groupSeq = 0;
 let persistTimer = null;
+// Maps a rendered .chat-split element back to its tree node so divider drags
+// can read/write the persisted `sizes` (avoids a custom DOM property).
+const splitNodeMap = new WeakMap();
 // Set while applyLayout is adopting the host tree. persist() is suppressed
 // during that window so the webview never echoes the host's own layout back
 // as setChatLayout (which would ping-pong forever).
 let applyingLayout = false;
 let onFocusChange = null;
+// Open tab context menu (right-click) + the tab it anchors to (for focus
+// return on Escape). Lives on document.body, not in the grid, so grid
+// re-renders never tear it down — render() closes it explicitly instead.
+let contextMenu = null;
+let contextMenuAnchor = null;
 
 // Tree source of truth.
 let tree = null;
@@ -306,10 +314,14 @@ function sanitizeTree(node) {
     if (kept.length === 0) {
       return null;
     }
+    const sizes = Array.isArray(node.sizes) && node.sizes.length === kept.length
+      ? node.sizes.map((s) => (typeof s === 'number' && isFinite(s) && s > 0 ? s : 1))
+      : undefined;
     return {
       type: 'split',
       orientation: node.orientation === 'vertical' ? 'vertical' : 'horizontal',
       children: kept,
+      ...(sizes !== undefined ? { sizes } : {}),
     };
   }
   return null;
@@ -377,6 +389,9 @@ function buildTab(sessionId) {
   tab.setAttribute('role', 'tab');
   // Drag source for tab reorder / move / split (delegated in the grid).
   tab.draggable = true;
+  // Programmatically focusable (context menu returns focus here on Escape)
+  // without adding a tab stop.
+  tab.tabIndex = -1;
 
   const label = document.createElement('span');
   label.className = 'chat-tab-label';
@@ -616,8 +631,8 @@ function buildDropZone() {
 }
 
 // Drag-only 5-region overlay for edge-splitting. Hidden unless a drag is
-// live (CSS: body.dragging .chat-drop-overlay); regions are fixed EDGE px
-// bands with the center being everything inside them. Only the region under
+// live (CSS: body.dragging .chat-drop-overlay); split regions fill the half
+// the new zone will occupy, center is the whole pane. Only the region under
 // the pointer gets .active — no per-region event wiring.
 function buildDropOverlay() {
   const overlay = document.createElement('div');
@@ -656,6 +671,9 @@ function render() {
   if (!grid) {
     return;
   }
+  // Any structural change can orphan the tab context menu (its tab may be
+  // gone or re-rendered) — drop it defensively.
+  closeContextMenu();
   ensureGridChrome();
   // Capture existing panes by sessionId before tearing down the structure.
   const panes = new Map();
@@ -717,10 +735,95 @@ function renderNode(node, panes) {
   const split = document.createElement('div');
   split.className = 'chat-split';
   split.dataset.orientation = node.orientation === 'vertical' ? 'vertical' : 'horizontal';
-  node.children.forEach(function (child) {
-    split.appendChild(renderNode(child, panes));
+  splitNodeMap.set(split, node);
+  const sizes = Array.isArray(node.sizes) && node.sizes.length === node.children.length
+    ? node.sizes
+    : node.children.map(function () {
+        return 1;
+      });
+  node.children.forEach(function (child, i) {
+    if (i > 0) {
+      split.appendChild(buildSplitDivider(split, i - 1));
+    }
+    const childEl = renderNode(child, panes);
+    childEl.style.flexGrow = String(sizes[i]);
+    split.appendChild(childEl);
   });
   return split;
+}
+
+// A draggable divider between two split children. Pointer-drag adjusts the
+// two adjacent children's flex-grow (persisted via the split's `sizes`).
+function buildSplitDivider(split, index) {
+  const divider = document.createElement('div');
+  divider.className = 'chat-split-divider';
+  divider.dataset.splitIndex = String(index);
+  divider.setAttribute('role', 'separator');
+  divider.setAttribute('aria-orientation', split.dataset.orientation === 'vertical' ? 'horizontal' : 'vertical');
+  divider.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    divider.setPointerCapture(e.pointerId);
+    const vertical = split.dataset.orientation === 'vertical';
+    const start = vertical ? e.clientY : e.clientX;
+    const children = Array.prototype.slice.call(split.children).filter(function (el) {
+      return !el.classList.contains('chat-split-divider');
+    });
+    const a = children[index];
+    const b = children[index + 1];
+    if (!a || !b) {
+      return;
+    }
+    const startA = vertical ? a.offsetHeight : a.offsetWidth;
+    const startB = vertical ? b.offsetHeight : b.offsetWidth;
+    const total = startA + startB;
+    const node = splitNodeMap.get(split);
+    // A split created by a drag has no `sizes` yet; seed it so the resize is
+    // persisted (otherwise the next render would reset the panes to equal).
+    if (node && !Array.isArray(node.sizes)) {
+      node.sizes = node.children.map(function () {
+        return 1;
+      });
+    }
+    const sizes = node && Array.isArray(node.sizes) && node.sizes.length === children.length
+      ? node.sizes
+      : children.map(function () {
+          return 1;
+        });
+    const sumAB = sizes[index] + sizes[index + 1];
+    function onMove(ev) {
+      const pos = vertical ? ev.clientY : ev.clientX;
+      const delta = pos - start;
+      let newA = startA + delta;
+      let newB = startB - delta;
+      const min = 40;
+      if (newA < min) {
+        newB -= min - newA;
+        newA = min;
+      }
+      if (newB < min) {
+        newA -= min - newB;
+        newB = min;
+      }
+      const sizeA = (newA / total) * sumAB;
+      const sizeB = (newB / total) * sumAB;
+      a.style.flexGrow = String(sizeA);
+      b.style.flexGrow = String(sizeB);
+      if (node && Array.isArray(node.sizes)) {
+        node.sizes[index] = sizeA;
+        node.sizes[index + 1] = sizeB;
+      }
+    }
+    function onUp() {
+      divider.removeEventListener('pointermove', onMove);
+      divider.removeEventListener('pointerup', onUp);
+      divider.removeEventListener('pointercancel', onUp);
+      persist();
+    }
+    divider.addEventListener('pointermove', onMove);
+    divider.addEventListener('pointerup', onUp);
+    divider.addEventListener('pointercancel', onUp);
+  });
+  return divider;
 }
 
 // Shows the active tab's pane per zone (hides the rest) and marks the active
@@ -946,7 +1049,9 @@ function lastSessionInTree() {
 //   - .chat-group body      → center: move into zone; edges: split
 //   - empty grid / strip    → create a new zone
 
-const EDGE = 22; // px — split-band depth; keep in sync with .chat-drop-region CSS
+// Fraction of the zone's width/height that arms a split drop. The ghost then
+// fills half the zone (see .chat-drop-region CSS) to preview the split.
+const EDGE = 0.25;
 
 function onDragStart(e) {
   const row = e.target.closest('.session-row');
@@ -975,6 +1080,13 @@ function onTabDragStart(e) {
 }
 
 function startDrag(e, sessionId, sourceEl) {
+  // A drag dropped outside the webview (e.g. onto the editor) never fires
+  // `dragend` inside it, leaving `body.dragging` stuck — and the
+  // `body.dragging .chat-tab:not(.dragging) { pointer-events: none }` rule
+  // would then block every later drag. Clear stale state before starting.
+  if (dragSessionId || dragSourceEl || document.body.classList.contains('dragging')) {
+    onDragEnd();
+  }
   e.dataTransfer.setData(DRAG_TYPE, sessionId);
   e.dataTransfer.setData('text/plain', sessionId);
   const isOpen = findZoneNodeContaining(tree, sessionId) !== null;
@@ -1093,16 +1205,18 @@ function dropTargetMode(group, e) {
       return { mode: 'tabbar' };
     }
   }
-  if (y < EDGE) {
+  const edgeX = r.width * EDGE;
+  const edgeY = r.height * EDGE;
+  if (y < edgeY) {
     return { mode: 'region', region: 'top' };
   }
-  if (y > r.height - EDGE) {
+  if (y > r.height - edgeY) {
     return { mode: 'region', region: 'bottom' };
   }
-  if (x < EDGE) {
+  if (x < edgeX) {
     return { mode: 'region', region: 'left' };
   }
-  if (x > r.width - EDGE) {
+  if (x > r.width - edgeX) {
     return { mode: 'region', region: 'right' };
   }
   return { mode: 'region', region: 'center' };
@@ -1114,6 +1228,27 @@ function highlightRegion(group, region) {
   });
 }
 
+// Whether dropping `sessionId` at `mode` in `group` would change nothing —
+// reordering a tab onto its own slot, focusing the already-focused pane, or
+// splitting a single-tab zone (which self-heals). Suppresses the ghost.
+function isNoopDrop(group, sessionId, mode, insertIndex) {
+  const gid = group.dataset.groupId;
+  const target = findGroupNode(tree, gid);
+  const idx = target ? target.sessionIds.indexOf(sessionId) : -1;
+  if (idx === -1) {
+    return false; // opening/moving into a different zone always changes layout
+  }
+  if (mode.mode === 'tabbar') {
+    // Removing the tab shifts order; inserting at idx or idx+1 is a no-op.
+    return insertIndex === idx || insertIndex === idx + 1;
+  }
+  if (mode.region === 'center') {
+    return state.activeSessionId === sessionId; // focus self = no-op
+  }
+  // Edge split of a zone holding only this session self-heals.
+  return target.sessionIds.length === 1;
+}
+
 // ── Drag-over / drop ─────────────────────────────────────────────────────
 
 function onGridDragOver(e) {
@@ -1121,17 +1256,31 @@ function onGridDragOver(e) {
     return;
   }
   e.preventDefault();
+  // A transient blur (drag left the webview and came back) clears drag state
+  // mid-drag; re-assert it from the live dataTransfer so hover/drop work.
+  if (!dragSessionId) {
+    dragSessionId = e.dataTransfer.getData(DRAG_TYPE) || e.dataTransfer.getData('text/plain') || dragSessionId;
+  }
+  if (!document.body.classList.contains('dragging')) {
+    document.body.classList.add('dragging');
+  }
   const isOpen = dragSessionId && findZoneNodeContaining(tree, dragSessionId) !== null;
   e.dataTransfer.dropEffect = isOpen ? 'move' : 'copy';
   const group = e.target.closest('.chat-group');
   clearDragOver();
   hideEmptyDragTarget();
   if (group) {
-    group.classList.add('drag-over');
     const mode = dropTargetMode(group, e);
+    const insertIndex = mode.mode === 'tabbar'
+      ? computeTabInsertIndex(group.querySelector('.chat-tabbar'), e.clientX)
+      : -1;
+    if (isNoopDrop(group, dragSessionId, mode, insertIndex)) {
+      return; // no ghost when the drop would change nothing
+    }
+    group.classList.add('drag-over');
     if (mode.mode === 'tabbar') {
       const tabbar = group.querySelector('.chat-tabbar');
-      highlightTabGap(tabbar, computeTabInsertIndex(tabbar, e.clientX));
+      highlightTabGap(tabbar, insertIndex);
     } else {
       highlightRegion(group, mode.region);
     }
@@ -1287,7 +1436,7 @@ function splitZone(groupId, edge, sessionId) {
   if (onlyTab) {
     const parent = findParentNode(tree, groupId);
     if (parent) {
-      parent.children[parent.index] = newGroup;
+      parent.parent.children[parent.index] = newGroup;
     } else {
       tree = newGroup;
     }
@@ -1306,7 +1455,7 @@ function splitZone(groupId, edge, sessionId) {
     };
     const parent = findParentNode(tree, groupId);
     if (parent) {
-      parent.children[parent.index] = split;
+      parent.parent.children[parent.index] = split;
     } else {
       tree = split;
     }
@@ -1347,6 +1496,247 @@ function onGridClick(e) {
   if (pane && pane.dataset.sessionId && !pane.hasAttribute('data-focused')) {
     focusPane(pane.dataset.sessionId);
   }
+}
+
+// ── Tab context menu (right-click) ───────────────────────────────────────
+// A floating, cursor-anchored menu appended to `document.body` (not the
+// grid) so grid re-renders never tear it down. Delegated from the grid's
+// `contextmenu` event; the menu targets the right-clicked tab. Sessions
+// that close/delete while the menu is open are rejected when an item runs.
+
+function closeContextMenu() {
+  if (!contextMenu) {
+    return;
+  }
+  document.removeEventListener('pointerdown', onContextMenuOutsideDown);
+  document.removeEventListener('keydown', onContextMenuKeydown);
+  window.removeEventListener('blur', onContextMenuWindowBlur);
+  contextMenu.remove();
+  contextMenu = null;
+  contextMenuAnchor = null;
+}
+
+// Dismiss on any pointer press outside the menu (before click, so a click on
+// an item still reaches its own handler — the menu is only torn down when the
+// press lands elsewhere).
+function onContextMenuOutsideDown(e) {
+  if (contextMenu && !contextMenu.contains(e.target)) {
+    closeContextMenu();
+  }
+}
+
+function onContextMenuWindowBlur() {
+  closeContextMenu();
+}
+
+function isSessionOpen(sessionId) {
+  return findZoneNodeContaining(tree, sessionId) !== null;
+}
+
+// Batch-removes ids from the tree, collapsing empty groups/splits as it
+// goes. Each removeFromNode returns the new root — thread it through so the
+// collapses accumulate. Render + focus repair happen in the caller.
+function removeSessionIds(ids) {
+  let node = tree;
+  ids.forEach(function (sid) {
+    const r = removeFromNode(node, sid);
+    if (r.changed) {
+      node = r.node;
+    }
+  });
+  tree = node;
+}
+
+// Focus repair for batch closes: keep the current focus when its pane
+// survived, else the last session in the tree, else clear.
+function focusRepairAfterBatch() {
+  if (state.activeSessionId && findPane(state.activeSessionId)) {
+    return;
+  }
+  const next = lastSessionInTree();
+  if (next && findPane(next)) {
+    focusPane(next);
+  } else {
+    clearFocus();
+  }
+}
+
+function buildContextMenuItem(label, fn) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tab-context-menu-item';
+  btn.setAttribute('role', 'menuitem');
+  btn.textContent = label;
+  btn.addEventListener('click', function () {
+    closeContextMenu();
+    fn();
+  });
+  return btn;
+}
+
+function positionContextMenu(menu, x, y) {
+  const w = menu.offsetWidth;
+  const h = menu.offsetHeight;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const margin = 6;
+  let left = x;
+  let top = y;
+  if (left + w > vw - margin) {
+    left = Math.max(margin, vw - w - margin);
+  }
+  if (top + h > vh - margin) {
+    // Flip above the cursor when there is more room there; else clamp.
+    if (top - h > margin) {
+      top = top - h;
+    } else {
+      top = Math.max(margin, vh - h - margin);
+    }
+  }
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+}
+
+function focusContextMenuItem(items, index) {
+  const n = items.length;
+  if (!n) {
+    return;
+  }
+  const i = ((index % n) + n) % n;
+  items[i].focus();
+}
+
+function onContextMenuKeydown(e) {
+  if (!contextMenu) {
+    return;
+  }
+  // Arrows/Home/End navigate the items — only when focus is actually inside
+  // the menu (Tab may have moved it elsewhere). Escape always closes.
+  const inMenu = contextMenu.contains(document.activeElement);
+  if (e.key === 'ArrowDown' && inMenu) {
+    e.preventDefault();
+    const items = $$('[role="menuitem"]', contextMenu);
+    focusContextMenuItem(items, items.indexOf(document.activeElement) + 1);
+  } else if (e.key === 'ArrowUp' && inMenu) {
+    e.preventDefault();
+    const items = $$('[role="menuitem"]', contextMenu);
+    focusContextMenuItem(items, items.indexOf(document.activeElement) - 1);
+  } else if (e.key === 'Home' && inMenu) {
+    e.preventDefault();
+    const items = $$('[role="menuitem"]', contextMenu);
+    if (items[0]) {
+      items[0].focus();
+    }
+  } else if (e.key === 'End' && inMenu) {
+    e.preventDefault();
+    const items = $$('[role="menuitem"]', contextMenu);
+    if (items.length) {
+      items[items.length - 1].focus();
+    }
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    const anchor = contextMenuAnchor;
+    closeContextMenu();
+    if (anchor && typeof anchor.focus === 'function') {
+      anchor.focus();
+    }
+  }
+}
+
+function buildContextMenu(sessionId, x, y, anchor) {
+  closeContextMenu();
+  const zone = findZoneNodeContaining(tree, sessionId);
+
+  const menu = document.createElement('div');
+  menu.className = 'tab-context-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Chat tab actions');
+  menu.addEventListener('contextmenu', function (e) {
+    e.preventDefault(); // no native menu inside the custom one
+  });
+
+  menu.appendChild(
+    buildContextMenuItem('New Chat', function () {
+      post({ type: 'newSession' });
+    })
+  );
+  // Native menus group related actions — separate the create action from
+  // the close group with a hairline rule.
+  const separator = document.createElement('div');
+  separator.className = 'tab-context-menu-separator';
+  separator.setAttribute('role', 'separator');
+  menu.appendChild(separator);
+  menu.appendChild(
+    buildContextMenuItem('Close', function () {
+      if (isSessionOpen(sessionId)) {
+        closeSession(sessionId);
+      }
+    })
+  );
+
+  // "Close Others" only makes sense when the zone holds more than one tab.
+  const others = zone
+    ? zone.sessionIds.filter(function (sid) {
+        return sid !== sessionId;
+      })
+    : [];
+  if (others.length > 0) {
+    menu.appendChild(
+      buildContextMenuItem('Close Others', function () {
+        if (!isSessionOpen(sessionId)) {
+          return;
+        }
+        removeSessionIds(others);
+        render();
+        if (findPane(sessionId)) {
+          focusPane(sessionId);
+        } else {
+          focusRepairAfterBatch();
+        }
+        syncEmptyStates();
+        persist();
+      })
+    );
+  }
+  menu.appendChild(
+    buildContextMenuItem('Close All', function () {
+      if (!isSessionOpen(sessionId)) {
+        return;
+      }
+      removeSessionIds(zone.sessionIds.slice());
+      render();
+      focusRepairAfterBatch();
+      syncEmptyStates();
+      persist();
+    })
+  );
+
+  document.body.appendChild(menu);
+  contextMenu = menu;
+  contextMenuAnchor = anchor || null;
+  positionContextMenu(menu, x, y);
+  document.addEventListener('pointerdown', onContextMenuOutsideDown);
+  document.addEventListener('keydown', onContextMenuKeydown);
+  window.addEventListener('blur', onContextMenuWindowBlur);
+  // Accessibility: open with focus on the first item.
+  const first = menu.querySelector('[role="menuitem"]');
+  if (first instanceof HTMLElement) {
+    first.focus();
+  }
+}
+
+function onGridContextMenu(e) {
+  const tab = e.target.closest('.chat-tab');
+  if (!tab || !tab.dataset.sessionId) {
+    return; // not on a tab — leave the native menu alone
+  }
+  e.preventDefault();
+  const sessionId = tab.dataset.sessionId;
+  // VS Code convention: right-click selects the tab before showing the menu.
+  if (sessionId !== state.activeSessionId) {
+    focusPane(sessionId);
+  }
+  buildContextMenu(sessionId, e.clientX, e.clientY, tab);
 }
 
 // ── Empty states ─────────────────────────────────────────────────────────
@@ -1511,4 +1901,15 @@ export function initLayout() {
   grid.addEventListener('dragleave', onGridDragLeave);
   grid.addEventListener('drop', onGridDrop);
   grid.addEventListener('click', onGridClick);
+  grid.addEventListener('contextmenu', onGridContextMenu);
+
+  // A drop that lands outside the webview (e.g. on the editor) never fires
+  // `dragend` inside it, which would leave `body.dragging` stuck and disable
+  // every later tab drag via `pointer-events: none`. Dropping outside hands
+  // focus to the editor, so `window.blur` is the reliable recovery signal.
+  window.addEventListener('blur', function () {
+    if (document.body.classList.contains('dragging')) {
+      onDragEnd();
+    }
+  });
 }

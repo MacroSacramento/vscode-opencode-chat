@@ -14,6 +14,8 @@ import { runNativeCommand } from './nativeCommands';
 
 const VIEW_ID = 'opencode.chat';
 const STREAM_ARM_INTERVAL_MS = 10000;
+/** Workspace-state key for whether the session panel is collapsed. */
+const SESSION_PANEL_COLLAPSED_KEY = 'opencodeChat.sessionPanelCollapsed';
 
 /**
  * Maps a file extension to the mime type the opencode server uses to decide
@@ -226,6 +228,12 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
   private readonly handlers: Record<string, Handler> = {
     ready: async () => {
       this.armEventStream();
+      // Post the persisted session-panel collapse state (default collapsed)
+      // before `connected` so the panel never flashes open on first paint.
+      this.post({
+        type: 'sessionPanelCollapsed',
+        collapsed: this.context.workspaceState.get<boolean>(SESSION_PANEL_COLLAPSED_KEY, true),
+      });
       this.post({ type: 'connected', connected: isConnected() });
       // Restore the persisted grid before history arrives so the webview can
       // render panes first.
@@ -394,6 +402,10 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
       } else {
         this.post({ type: 'subagents', sessionId, sessions: [] });
       }
+    },
+    setSessionPanelCollapsed: async (message) => {
+      const collapsed = message.collapsed === true;
+      await this.context.workspaceState.update(SESSION_PANEL_COLLAPSED_KEY, collapsed);
     },
     permissionReply: async (message) => {
       await this.questionLifecycle.handlePermissionReply(message);

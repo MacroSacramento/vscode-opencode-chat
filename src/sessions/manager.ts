@@ -158,7 +158,15 @@ export class SessionManager {
         if (children.length === 1) {
           return children[0];
         }
-        return { type: 'split', orientation: n.orientation === 'vertical' ? 'vertical' : 'horizontal', children };
+        const sizes = Array.isArray(n.sizes) && n.sizes.length === children.length
+          ? n.sizes.map((s) => (typeof s === 'number' && isFinite(s) && s > 0 ? s : 1))
+          : undefined;
+        return {
+          type: 'split',
+          orientation: n.orientation === 'vertical' ? 'vertical' : 'horizontal',
+          children,
+          ...(sizes !== undefined ? { sizes } : {}),
+        };
       }
       return null;
     };

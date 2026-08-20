@@ -351,8 +351,6 @@ code {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px 12px;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -377,7 +375,7 @@ code {
 
 .grid-empty-hint.drag-over {
   border-color: var(--oc-focus);
-  background: var(--vscode-sideBar-dropBackground, rgba(0, 122, 204, 0.08));
+  background: var(--vscode-editorGroup-dropBackground, rgba(0, 122, 204, 0.08));
 }
 
 .grid-empty-icon {
@@ -410,7 +408,6 @@ code {
   min-width: 0;
   min-height: 0;
   display: flex;
-  gap: 8px;
 }
 
 .chat-split[data-orientation="horizontal"] {
@@ -419,6 +416,100 @@ code {
 
 .chat-split[data-orientation="vertical"] {
   flex-direction: column;
+}
+
+/* Draggable divider between split children. The divider is the spacing
+   element (replaces the old `gap`); a thin hit area with a visible hairline
+   and a small centered grip so the split reads as resizable at rest. Both
+   intensify on hover/active, like a VS Code sash. flex-grow on the adjacent
+   children is set inline by layout.js. */
+.chat-split-divider {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.chat-split[data-orientation="horizontal"] > .chat-split-divider {
+  width: 6px;
+  cursor: col-resize;
+}
+
+.chat-split[data-orientation="vertical"] > .chat-split-divider {
+  height: 6px;
+  cursor: row-resize;
+}
+
+/* Hairline separator, visible at rest so the boundary between panes is
+   discoverable. Falls back through border tokens to the theme border. */
+.chat-split-divider::after {
+  content: "";
+  position: absolute;
+  background: var(--vscode-panel-border, var(--vscode-editorWidget-border, var(--oc-border)));
+  transition: background 0.12s ease;
+}
+
+.chat-split[data-orientation="horizontal"] > .chat-split-divider::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.chat-split[data-orientation="vertical"] > .chat-split-divider::after {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+/* Small centered grip handle — three dots (VS Code sash style): stacked
+   vertically on horizontal splits, side by side on vertical splits. Drawn
+   from a single 2px dot plus box-shadows so the color lives in one place. */
+.chat-split-divider::before {
+  content: "";
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+  color: var(--vscode-editorWidget-border, var(--oc-border));
+  transition: color 0.12s ease;
+}
+
+.chat-split[data-orientation="horizontal"] > .chat-split-divider::before {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 -4px 0 currentColor, 0 4px 0 currentColor;
+}
+
+.chat-split[data-orientation="vertical"] > .chat-split-divider::before {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: -4px 0 0 currentColor, 4px 0 0 currentColor;
+}
+
+/* Hover/drag: tint the hit area and highlight the hairline and grip, like a
+   VS Code sash. The grip recolor goes through `color` so all three dots
+   (including the box-shadow copies) update together. */
+.chat-split-divider:hover,
+.chat-split-divider:active {
+  background: var(--vscode-sash-hoverBackground, transparent);
+}
+
+.chat-split-divider:hover::after,
+.chat-split-divider:active::after {
+  background: var(--vscode-sash-hoverBorder, var(--oc-focus));
+}
+
+.chat-split-divider:hover::before,
+.chat-split-divider:active::before {
+  color: var(--vscode-sash-hoverBorder, var(--oc-focus));
 }
 
 /* Zone — tab bar on top, pane below. flex-basis 0 so zones share space
@@ -435,14 +526,13 @@ code {
 }
 
 .chat-group.drag-over {
-  box-shadow: inset 0 0 0 1px var(--oc-focus);
-  background: var(--vscode-sideBar-dropBackground, rgba(0, 122, 204, 0.08));
+  background: var(--vscode-editorGroup-dropBackground, rgba(0, 122, 204, 0.08));
 }
 
-/* 5-region edge-split overlay — drag-only, covers each zone. Regions are
-   fixed 22px bands (EDGE in layout.js) with the center being everything
-   inside them. Hidden unless a drag is live; only the region under the
-   pointer gets .active. */
+/* 5-region drop overlay — drag-only, covers each zone. Split regions now fill
+   the half the new zone will occupy (top/bottom/left/right halves); center is
+   the whole pane (move-into-zone). Hidden unless a drag is live; only the
+   region under the pointer gets .active. */
 .chat-drop-overlay {
   position: absolute;
   inset: 0;
@@ -463,8 +553,7 @@ body.dragging .chat-drop-overlay {
 .chat-drop-region {
   position: absolute;
   display: none;
-  background: var(--vscode-sideBar-dropBackground, rgba(0, 122, 204, 0.08));
-  border-radius: var(--oc-radius-md);
+  background: var(--vscode-editorGroup-dropBackground, rgba(0, 122, 204, 0.08));
 }
 
 .chat-drop-region.active {
@@ -475,59 +564,69 @@ body.dragging .chat-drop-overlay {
   top: 0;
   left: 0;
   right: 0;
-  height: 22px;
+  height: 50%;
 }
 
 .chat-drop-region.bottom {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 22px;
+  height: 50%;
 }
 
 .chat-drop-region.left {
-  top: 22px;
-  bottom: 22px;
+  top: 0;
+  bottom: 0;
   left: 0;
-  width: 22px;
+  width: 50%;
 }
 
 .chat-drop-region.right {
-  top: 22px;
-  bottom: 22px;
+  top: 0;
+  bottom: 0;
   right: 0;
-  width: 22px;
+  width: 50%;
 }
 
 .chat-drop-region.center {
-  top: 22px;
-  bottom: 22px;
-  left: 22px;
-  right: 22px;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
 }
 
-/* Tab bar — VS Code-like tabs, one per open session in the zone. */
+/* Tab bar — VS Code-like editor tabs, one per open session in the zone.
+   Rendered as a native editor-group header strip: its own background plus a
+   1px bottom border, with square 35px tabs sitting flush at the bottom. */
 .chat-tabbar {
   flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
-  gap: 2px;
-  padding: 2px 4px 0;
+  gap: 0;
+  padding: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  background: var(--vscode-editorGroupHeader-tabsBackground, var(--oc-chat-bg));
+  border-bottom: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--oc-border));
 }
 
+/* Square tab handle — no radius. Inactive tabs get side borders
+   (--vscode-tab-border) so adjacent tabs read as separated like native tabs;
+   the strip's own bottom border supplies the line below. */
 .chat-tab {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   max-width: 160px;
-  padding: 3px 8px;
-  font-size: 11px;
-  line-height: 1.4;
+  height: 35px;
+  padding: 0 10px;
+  font-size: 13px;
+  line-height: 1;
   color: var(--vscode-tab-inactiveForeground, var(--oc-text-subtle));
   background: var(--vscode-tab-inactiveBackground, transparent);
-  border-radius: var(--oc-radius-sm) var(--oc-radius-sm) 0 0;
+  border: 1px solid transparent;
+  border-left-color: var(--vscode-tab-border, var(--oc-border));
+  border-right-color: var(--vscode-tab-border, var(--oc-border));
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
@@ -537,12 +636,26 @@ body.dragging .chat-drop-overlay {
 
 .chat-tab:hover {
   background: var(--vscode-tab-hoverBackground, var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.1)));
+  color: var(--vscode-tab-hoverForeground, var(--vscode-tab-inactiveForeground, var(--oc-text-subtle)));
 }
 
+/* Active tab — matches the editor background so it merges into the pane
+   below (transparent bottom border), with an accent top border and side
+   borders. Ruled after :hover so the active tab keeps its background. */
 .chat-tab.active {
   color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
-  background: var(--vscode-tab-activeBackground, var(--oc-chat-bg));
-  box-shadow: inset 0 1px 0 0 var(--vscode-tab-activeBorderTop, var(--oc-focus));
+  background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-tab-border, var(--oc-border));
+  border-top-color: var(--vscode-tab-activeBorderTop, var(--oc-focus));
+  border-bottom-color: transparent;
+}
+
+/* Unfocused group — the active tab dims to the unfocused tokens. Progressive
+   enhancement via :has() (same pattern used elsewhere in this file); where
+   unsupported it falls back to the focused active colors. */
+.chat-group:not(:has(.chat-pane[data-focused])) .chat-tab.active {
+  background: var(--vscode-tab-unfocusedActiveBackground, var(--vscode-tab-activeBackground, var(--vscode-editor-background)));
+  color: var(--vscode-tab-unfocusedActiveForeground, var(--vscode-tab-activeForeground, var(--vscode-foreground)));
 }
 
 .chat-tab-label {
@@ -562,6 +675,12 @@ body.dragging .chat-drop-overlay {
   color: inherit;
   opacity: 0;
   transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+/* Close always visible on the active tab; on inactive tabs it fades in on
+   hover — matching native editor tabs. */
+.chat-tab.active .chat-tab-close {
+  opacity: 0.8;
 }
 
 .chat-tab:hover .chat-tab-close,
@@ -607,8 +726,8 @@ body.dragging .chat-tab:not(.dragging) {
 .chat-tab.tab-gap-right::after {
   content: "";
   position: absolute;
-  top: 3px;
-  bottom: 0;
+  top: 6px;
+  bottom: 6px;
   width: 2px;
   border-radius: 1px;
   background: var(--oc-focus);
@@ -631,11 +750,10 @@ body.dragging .chat-tab:not(.dragging) {
   flex-direction: column;
 }
 
-/* Pane — a distinct bordered card. The ring is an inset box-shadow (no real
-   border) so it never shifts layout or triggers reflow/scroll jump; a subtle
-   radius softens the corners. Only the focused tab's pane is visible; the
-   rest carry the `hidden` attribute (display:none) but stay in the DOM so
-   their messages keep rendering. */
+/* Pane — flush editor area, matching native VS Code: square corners, editor
+   background, no card ring. The active tab above already communicates focus
+   (its accent top border + matching background merge into this pane), so the
+   pane itself carries no focus ring. */
 .chat-pane {
   flex: 1 1 auto;
   min-width: 0;
@@ -643,18 +761,7 @@ body.dragging .chat-tab:not(.dragging) {
   display: flex;
   flex-direction: column;
   position: relative;
-  background: transparent;
-  border-radius: var(--oc-radius-md);
-  box-shadow: inset 0 0 0 1px var(--oc-border);
-}
-
-/* Focused pane — the active chat gets a thicker accent ring layered INSIDE
-   the open-pane border ring (3px total: 2px focus + 1px border outside it),
-   so it stays clearly highlighted while still reading as a bordered pane.
-   All inset — no layout shift, no reflow/scroll jump. Radius inherited from
-   the base pane. */
-.chat-pane[data-focused] {
-  box-shadow: inset 0 0 0 2px var(--oc-focus), inset 0 0 0 3px var(--oc-border);
+  background: var(--vscode-editor-background, var(--oc-chat-bg));
 }
 
 .chat-pane-conversation {
@@ -721,7 +828,7 @@ body.dragging .chat-tab:not(.dragging) {
 .grid-drop-zone.drag-over {
   border-color: var(--oc-focus);
   color: var(--vscode-foreground, var(--vscode-editor-foreground));
-  background: var(--vscode-sideBar-dropBackground, rgba(0, 122, 204, 0.08));
+  background: var(--vscode-editorGroup-dropBackground, rgba(0, 122, 204, 0.08));
 }
 
 .grid-drop-zone svg {
@@ -2149,6 +2256,61 @@ body.dragging .session-row {
   padding: 8px 10px;
   font-size: 12px;
   color: var(--oc-text-subtle);
+}
+
+/* ── Tab context menu (right-click on a chat tab) ───────────────────────── */
+/* A floating cursor-anchored menu, unlike the badge pickers — it is not
+   anchored to a button, so it gets its own class. Fixed positioning is set
+   inline by layout.js (clamped to the viewport).
+   Styled to read as a native macOS context menu: compact content-sized
+   items, a ~6px rounded shell, hairline border, soft layered shadow, and a
+   separator between action groups. */
+
+.tab-context-menu {
+  position: fixed;
+  z-index: 100;
+  padding: 4px;
+  overflow: hidden; /* clip item highlights to the rounded shell */
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.97)));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-menu-border, var(--oc-border));
+  border-radius: 6px; /* macOS-style rounded shell */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 8px 24px rgba(0, 0, 0, 0.28);
+  user-select: none;
+}
+
+.tab-context-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 24px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 4px; /* inset rounded highlight, like native menus */
+  background: transparent;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.tab-context-menu-item:hover,
+.tab-context-menu-item:focus-visible {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.14)));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+  outline: none;
+}
+
+/* macOS menus separate action groups with a hairline rule, inset from the
+   edges. Rendered between "New Chat" and the Close group. */
+.tab-context-menu-separator {
+  height: 1px;
+  margin: 4px 12px;
+  background: var(--vscode-menu-separatorBackground, var(--oc-border));
 }
 
 /* ── Session list flash (from /sessions) ────────────────────────────────── */

@@ -8,14 +8,15 @@ import type { Message, Part } from '@opencode-ai/sdk/dist/v2/client';
  * host → webview: `connected`, `sessions`, `history`, `delta`, `message`,
  * `busy`, `sessionDeleted`, `catalog`, `sessionMeta`, `nativeResult`,
  * `subagents`, `files`, `permission`, `permissionResolved`, `question`,
- * `questionResolved`, `error`, `insertContext`, `chatLayout`
+ * `questionResolved`, `error`, `insertContext`, `chatLayout`,
+ * `sessionPanelCollapsed`
  *
  * webview → host: `ready`, `selectSession`, `prompt` (optional `files`:
  * workspace-relative posix paths, and `agent`: per-prompt override),
  * `newSession` (same optional `files`/`agent`), `deleteSession`,
  * `refreshSessions`, `executeCommand`, `nativeCommand`, `setAgent`, `setModel`,
  * `getCatalog`, `getFiles`, `setSubagentsVisible`, `permissionReply`,
- * `questionReply`, `setChatLayout`
+ * `questionReply`, `setChatLayout`, `setSessionPanelCollapsed`
  */
 
 /**
@@ -57,6 +58,8 @@ export interface ChatSplit {
   type: 'split';
   orientation: ChatOrientation;
   children: ChatLayoutNode[];
+  /** Optional flex-grow proportions per child (default: equal). */
+  sizes?: number[];
 }
 
 export type ChatLayoutNode = ChatGroup | ChatSplit;
