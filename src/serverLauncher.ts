@@ -151,10 +151,11 @@ export interface LaunchResult {
 }
 
 /**
- * Detached `opencode serve` spawn. Only fires when the configured server URL is
+ * Hidden `opencode serve` spawn. Only fires when the configured server URL is
  * a loopback address (http/https). The child is tracked so it can be stopped
- * when the window closes (`stopServer`); `detached` puts it in its own process
- * group so the whole server tree can be killed together.
+ * when the window closes (`stopServer`). POSIX: `detached` puts it in its own
+ * process group so the whole server tree can be killed together. Windows:
+ * non-detached (see `launchServer` for why) and killed via `taskkill /T`.
  *
  * The binary is resolved first (`findOpenCodeBinary`) so a missing install is
  * reported as `binary-not-found` instead of an ENOENT spawn error. EADDRINUSE
@@ -192,11 +193,16 @@ export async function launchServer(serverUrl: string, log: (message: string) => 
 		}
 
 		// npm installs `opencode.cmd` shims on Windows; `spawn()` can't run
-		// those directly, so route them through cmd.exe. `windowsHide` keeps
-		// the detached server (and its cmd.exe wrapper) from opening a console
-		// window on Windows.
-		const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(binary);
-		const child = spawn(binary, args, { detached: true, stdio: 'ignore', cwd, shell: needsShell, windowsHide: true });
+		// those directly, so route them through cmd.exe.
+		const isWin = process.platform === 'win32';
+		const needsShell = isWin && /\.(cmd|bat)$/i.test(binary);
+		// Windows: `detached: true` must stay off — Windows ignores
+		// CREATE_NO_WINDOW when combined with DETACHED_PROCESS, so
+		// `windowsHide` silently no-ops and cmd.exe opens its own console
+		// window (nodejs/node#21825). Without detached, libuv's global job
+		// object (KILL_ON_JOB_CLOSE) kills the child when the extension host
+		// exits — which is the intended per-window lifecycle anyway.
+		const child = spawn(binary, args, { detached: !isWin, stdio: 'ignore', cwd, shell: needsShell, windowsHide: true });
 		serverProcess = child;
 		child.unref();
 
@@ -230,8 +236,10 @@ export async function launchServer(serverUrl: string, log: (message: string) => 
 }
 
 /**
- * Stops the auto-started server for this window (SIGTERM to its process group,
- * so worker children die too). No-op when this window didn't spawn a server.
+ * Stops the auto-started server for this window. POSIX: SIGTERM to the
+ * process group (set via `detached`), so worker children die too. Windows:
+ * `taskkill /T` walks the tree (the spawn is non-detached there, so there's
+ * no process group to signal). No-op when this window didn't spawn a server.
  */
 export function stopServer(): void {
 	const child = serverProcess;
@@ -239,6 +247,18 @@ export function stopServer(): void {
 		return;
 	}
 	serverProcess = undefined;
+	if (process.platform === 'win32') {
+		// taskkill is a console app; windowsHide keeps it from flashing its
+		// own window when spawned from the GUI extension host.
+		try {
+			execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {
+				// Process already gone — nothing to reconcile.
+			});
+		} catch {
+			// Process already gone.
+		}
+		return;
+	}
 	try {
 		process.kill(-child.pid, 'SIGTERM');
 	} catch {
