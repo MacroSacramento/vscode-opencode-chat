@@ -6,7 +6,8 @@ import type { Message, Part } from '@opencode-ai/sdk/dist/v2/client';
  * sync manually when adding messages.
  *
  * host → webview: `connected`, `sessions`, `history`, `delta`, `message`,
- * `busy`, `sessionDeleted`, `catalog`, `sessionMeta`, `nativeResult`,
+ * `busy`, `sessionDeleted`, `catalog` (commands/agents/models + optional
+ * `defaultModel`/`defaultAgent`), `sessionMeta`, `nativeResult`,
  * `subagents`, `files`, `permission`, `permissionResolved`, `question`,
  * `questionResolved`, `error`, `insertContext`, `chatLayout`,
  * `sessionPanelCollapsed`
@@ -15,8 +16,9 @@ import type { Message, Part } from '@opencode-ai/sdk/dist/v2/client';
  * workspace-relative posix paths, and `agent`: per-prompt override),
  * `newSession` (same optional `files`/`agent`), `deleteSession`,
  * `refreshSessions`, `executeCommand`, `nativeCommand`, `setAgent`, `setModel`,
- * `getCatalog`, `getFiles`, `setSubagentsVisible`, `permissionReply`,
- * `questionReply`, `setChatLayout`, `setSessionPanelCollapsed`
+ * `setVariant`, `getCatalog`, `getFiles`, `setSubagentsVisible`,
+ * `permissionReply`, `questionReply`, `setChatLayout`,
+ * `setSessionPanelCollapsed`
  */
 
 /**
@@ -106,6 +108,8 @@ export interface CatalogModel {
   modelID: string;
   modelName: string;
   contextLimit?: number;
+  /** Reasoning-effort variant ids the model supports (omitted when none). */
+  variants?: string[];
 }
 
 /** Session usage stats sent with `sessionMeta`. */

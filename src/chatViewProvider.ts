@@ -152,6 +152,10 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
    */
   async onConnected(): Promise<void> {
     this.armEventStream();
+    // `ready` usually fires while the server is still connecting, so the
+    // catalog load there no-ops; load it here so the badges show real
+    // defaults without waiting for a dropdown click (getCatalog).
+    void this.meta.loadCatalog();
     await this.sessions.refresh();
     for (const sessionId of this.sessions.getOpenSessionIds()) {
       if (isConnected()) {
@@ -386,6 +390,9 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
     setModel: (message) => {
       this.meta.handleSetModel(message);
     },
+    setVariant: (message) => {
+      this.meta.handleSetVariant(message);
+    },
     getCatalog: async () => {
       await this.meta.loadCatalog();
     },
@@ -477,6 +484,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
         parts: Array<{ type: 'text'; text: string } | { type: 'file'; url: string; mime: string; filename?: string }>;
         agent?: string;
         model?: { providerID: string; modelID: string };
+        variant?: string;
       } = {
         sessionID: sessionId,
         parts: [{ type: 'text', text }, ...fileParts],
@@ -490,6 +498,10 @@ class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable 
       const model = this.meta.getModel(sessionId);
       if (model !== undefined) {
         params.model = model;
+      }
+      const variant = this.meta.getVariant(sessionId);
+      if (variant !== undefined) {
+        params.variant = variant;
       }
       const res = await getClient().session.prompt(params);
       if (res.data !== undefined) {

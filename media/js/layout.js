@@ -347,6 +347,9 @@ function syncComposerRefs(pane) {
   state.modelPickerBtn = composer.querySelector('#modelPickerBtn');
   state.modelBadgeValue = composer.querySelector('#modelBadgeValue');
   state.modelMenu = composer.querySelector('#modelMenu');
+  state.variantPickerBtn = composer.querySelector('#variantPickerBtn');
+  state.variantBadgeValue = composer.querySelector('#variantBadgeValue');
+  state.variantMenu = composer.querySelector('#variantMenu');
   state.thinkingToggle = composer.querySelector('#thinkingToggle');
   state.thinkingToggleValue = composer.querySelector('#thinkingToggleValue');
   state.contextUsageLine = composer.querySelector('#contextUsageLine');
@@ -365,6 +368,9 @@ function clearComposerRefs() {
   state.modelPickerBtn = null;
   state.modelBadgeValue = null;
   state.modelMenu = null;
+  state.variantPickerBtn = null;
+  state.variantBadgeValue = null;
+  state.variantMenu = null;
   state.thinkingToggle = null;
   state.thinkingToggleValue = null;
   state.contextUsageLine = null;
@@ -515,6 +521,31 @@ function buildComposer() {
   modelWrap.appendChild(modelBtn);
   modelWrap.appendChild(modelMenu);
 
+  const variantWrap = document.createElement('span');
+  variantWrap.className = 'meta-badge-wrap';
+  const variantBtn = document.createElement('button');
+  variantBtn.id = 'variantPickerBtn';
+  variantBtn.className = 'meta-badge';
+  variantBtn.type = 'button';
+  variantBtn.title = 'Variant: default';
+  variantBtn.disabled = true;
+  const variantLabel = document.createElement('span');
+  variantLabel.className = 'meta-badge-label';
+  variantLabel.textContent = 'variant';
+  const variantValue = document.createElement('span');
+  variantValue.id = 'variantBadgeValue';
+  variantValue.className = 'meta-badge-value';
+  variantValue.textContent = 'default';
+  const variantMenu = document.createElement('div');
+  variantMenu.id = 'variantMenu';
+  variantMenu.className = 'menu-popup';
+  variantMenu.hidden = true;
+  variantMenu.tabIndex = -1;
+  variantBtn.appendChild(variantLabel);
+  variantBtn.appendChild(variantValue);
+  variantWrap.appendChild(variantBtn);
+  variantWrap.appendChild(variantMenu);
+
   const thinkWrap = document.createElement('span');
   thinkWrap.className = 'meta-badge-wrap';
   const thinkBtn = document.createElement('button');
@@ -537,6 +568,7 @@ function buildComposer() {
 
   metaStrip.appendChild(agentWrap);
   metaStrip.appendChild(modelWrap);
+  metaStrip.appendChild(variantWrap);
   metaStrip.appendChild(thinkWrap);
 
   const composerRow = document.createElement('div');

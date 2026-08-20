@@ -30,6 +30,7 @@ export const state = {
   panePendingUserEl: {},
   paneAgent: {},
   paneModel: {},
+  paneVariant: {},
   paneUsage: {},
   paneSubagents: {},
   panePendingPermission: {},
@@ -66,6 +67,9 @@ export const state = {
   files: null,
   agentMenu: null,
   modelMenu: null,
+  variantPickerBtn: null,
+  variantBadgeValue: null,
+  variantMenu: null,
   helpOverlay: null,
   helpList: null,
 };

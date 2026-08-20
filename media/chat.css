@@ -2094,6 +2094,12 @@ body.dragging .session-row {
   display: inline-flex;
 }
 
+/* The `hidden` attribute must win over the inline-flex display above, or a
+   hidden badge (e.g. variant with no variants) stays visible. */
+.meta-badge-wrap[hidden] {
+  display: none;
+}
+
 /* ── Thinking toggle (meta strip) ───────────────────────────────────────── */
 
 .thinking-toggle::after {
@@ -2163,6 +2169,36 @@ body.dragging .session-row {
   left: 12px;
   right: 12px;
   overflow-x: hidden;
+}
+
+/* Search input pinned to the top of the model menu. Sticky so it stays
+   visible while the filtered list scrolls; sits above the sticky group
+   headers (z-index 2 > 1). Only rendered when there are models to search. */
+.menu-search {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  background: var(--vscode-input-background, var(--vscode-quickInput-background, var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.95))));
+  border: none;
+  border-bottom: 1px solid var(--vscode-input-border, var(--oc-border));
+  outline: none;
+}
+
+.menu-search::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--oc-text-subtle));
+  opacity: 0.85;
+}
+
+.menu-search:focus {
+  border-bottom-color: var(--oc-focus);
 }
 
 .slash-row,

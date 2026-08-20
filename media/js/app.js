@@ -37,19 +37,27 @@ import {
   updateMetaBadges,
   renderAgentMenu,
   renderModelMenu,
+  renderVariantMenu,
   updateThinkingToggle,
   toggleThinking,
   openAgentMenu,
   closeAgentMenu,
   openModelMenu,
   closeModelMenu,
+  openVariantMenu,
+  closeVariantMenu,
   selectAgent,
   selectModel,
+  selectVariant,
   closeHelp,
   moveAgentIndex,
   moveModelIndex,
+  moveVariantIndex,
   selectCurrentAgent,
   selectCurrentModel,
+  selectCurrentVariant,
+  clearModelSearch,
+  focusModelSearch,
 } from './pickers.js';
 import {
   dismissQuestion,
@@ -120,6 +128,10 @@ function route(msg) {
       }
       if (state.modelMenu && !state.modelMenu.hidden) {
         renderModelMenu();
+        focusModelSearch();
+      }
+      if (state.variantMenu && !state.variantMenu.hidden) {
+        renderVariantMenu();
       }
       if (state.atPopup && !state.atPopup.hidden) {
         renderAtPopup();
@@ -139,6 +151,9 @@ function route(msg) {
         if (msg.model && typeof msg.model === 'object') {
           state.paneModel[msg.sessionId] = { providerID: msg.model.providerID, modelID: msg.model.modelID };
         }
+        if (typeof msg.variant === 'string') {
+          state.paneVariant[msg.sessionId] = msg.variant;
+        }
         // Only update usage when present: setAgent/setModel echoes omit it,
         // and nulling it here would wipe the value between updates.
         if (msg.usage) {
@@ -152,6 +167,10 @@ function route(msg) {
           }
           if (state.modelMenu && !state.modelMenu.hidden) {
             renderModelMenu();
+            focusModelSearch();
+          }
+          if (state.variantMenu && !state.variantMenu.hidden) {
+            renderVariantMenu();
           }
         }
       }
@@ -277,6 +296,9 @@ function init() {
   setOnFocusChange(function (sessionId) {
     updateComposerState();
     updateMetaBadges();
+    // Newly created panes start with the toggle's default "off" markup; sync
+    // it to the persisted preference whenever focus lands on a pane.
+    updateThinkingToggle();
     state.subagents = sessionId ? (state.paneSubagents[sessionId] || []) : [];
     setSubagentsToggle(false);
     renderSessionList();
@@ -487,7 +509,31 @@ function init() {
           selectCurrentModel();
         } else if (e.key === 'Escape') {
           e.preventDefault();
-          closeModelMenu();
+          // First Escape clears a non-empty search (menu stays open); a
+          // second Escape (empty search) closes the menu.
+          const search = menu.querySelector('.menu-search');
+          if (search && search.value) {
+            clearModelSearch();
+          } else {
+            closeModelMenu();
+            if (state.input) {
+              state.input.focus();
+            }
+          }
+        }
+      } else if (menu.id === 'variantMenu') {
+        if (menu.hidden) {
+          return;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          moveVariantIndex(e.key === 'ArrowDown' ? 1 : -1);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          selectCurrentVariant();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeVariantMenu();
           if (state.input) {
             state.input.focus();
           }
@@ -526,6 +572,15 @@ function init() {
       }
       return;
     }
+    const variantBtn = e.target.closest('#variantPickerBtn');
+    if (variantBtn) {
+      if (state.variantMenu && state.variantMenu.hidden) {
+        openVariantMenu();
+      } else {
+        closeVariantMenu();
+      }
+      return;
+    }
     const thinkBtn = e.target.closest('#thinkingToggle');
     if (thinkBtn) {
       toggleThinking();
@@ -544,6 +599,14 @@ function init() {
       const row = e.target.closest('[data-model]');
       if (row) {
         selectModel(row.dataset.provider, row.dataset.model);
+      }
+      return;
+    }
+    const variantMenu = e.target.closest('#variantMenu');
+    if (variantMenu) {
+      const row = e.target.closest('[data-variant]');
+      if (row) {
+        selectVariant(row.dataset.variant);
       }
       return;
     }
@@ -607,6 +670,9 @@ function init() {
     }
     if (state.modelMenu && !state.modelMenu.hidden && t !== state.modelPickerBtn && !state.modelPickerBtn.contains(t) && !state.modelMenu.contains(t)) {
       closeModelMenu();
+    }
+    if (state.variantMenu && !state.variantMenu.hidden && t !== state.variantPickerBtn && !state.variantPickerBtn.contains(t) && !state.variantMenu.contains(t)) {
+      closeVariantMenu();
     }
   });
 

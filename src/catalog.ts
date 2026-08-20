@@ -10,6 +10,7 @@ import type { CatalogAgent, CatalogCommand, CatalogModel, ProviderContext, Sessi
 export class MetaState {
   private readonly agentState = new Map<string, string>();
   private readonly modelState = new Map<string, { providerID: string; modelID: string }>();
+  private readonly variantState = new Map<string, string>();
   private readonly contextLimitByModel = new Map<string, number>();
   private defaultModel?: { providerID: string; modelID: string };
 
@@ -23,6 +24,10 @@ export class MetaState {
     return this.modelState.get(sessionId);
   }
 
+  getVariant(sessionId: string): string | undefined {
+    return this.variantState.get(sessionId);
+  }
+
   /**
    * Loads the command/agent/model catalog and posts it to the webview. Fired
    * automatically on `ready` and again on `getCatalog` (refresh).
@@ -32,17 +37,23 @@ export class MetaState {
       return;
     }
     try {
-      const [commandsRes, agentsRes, providersRes] = await Promise.all([
+      const [commandsRes, agentsRes, providersRes, configRes] = await Promise.all([
         getClient().command.list(),
         getClient().app.agents(),
         getClient().config.providers(),
+        // Best-effort: the full config carries the server's default agent.
+        // Failure here must not sink the whole catalog.
+        getClient().config.get().catch(() => undefined),
       ]);
       const commands: CatalogCommand[] = (commandsRes.data ?? [])
         .map((c) => ({ name: c.name, description: c.description, source: c.source }))
         .sort((a, b) => a.name.localeCompare(b.name));
-      const agents: CatalogAgent[] = (agentsRes.data ?? [])
-        .filter((a) => a.hidden !== true)
-        .map((a) => ({ name: a.name, description: a.description }));
+      const rawAgents = (agentsRes.data ?? []).filter((a) => a.hidden !== true);
+      const agents: CatalogAgent[] = rawAgents.map((a) => ({ name: a.name, description: a.description }));
+      // The server's default agent: explicit config, else the first primary
+      // agent, else the first agent. Shown on the agent badge for sessions
+      // with no explicit agent selection.
+      const defaultAgent = configRes?.data?.default_agent ?? rawAgents.find((a) => a.mode === 'primary')?.name ?? rawAgents[0]?.name;
       const models: CatalogModel[] = [];
       for (const provider of providersRes.data?.providers ?? []) {
         for (const [modelID, model] of Object.entries(provider.models ?? {})) {
@@ -52,6 +63,7 @@ export class MetaState {
             modelID,
             modelName: model.name || model.id,
             ...(model.limit?.context !== undefined ? { contextLimit: model.limit.context } : {}),
+            ...(model.variants && Object.keys(model.variants).length > 0 ? { variants: Object.keys(model.variants) } : {}),
           });
           if (model.limit?.context !== undefined) {
             this.contextLimitByModel.set(`${provider.id}/${modelID}`, model.limit.context);
@@ -71,6 +83,7 @@ export class MetaState {
         agents,
         models,
         ...(defaultModel !== undefined ? { defaultModel } : {}),
+        ...(defaultAgent !== undefined ? { defaultAgent } : {}),
       });
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
@@ -104,6 +117,11 @@ export class MetaState {
       } else {
         this.modelState.delete(sessionId);
       }
+      if (session.model?.variant) {
+        this.variantState.set(sessionId, session.model.variant);
+      } else {
+        this.variantState.delete(sessionId);
+      }
       const model = session.model ?? this.defaultModel;
       const modelID = model ? ('id' in model ? model.id : model.modelID) : undefined;
       const contextLimit = model && modelID !== undefined ? this.contextLimitByModel.get(`${model.providerID}/${modelID}`) : undefined;
@@ -121,6 +139,7 @@ export class MetaState {
         sessionId,
         ...(session.agent !== undefined ? { agent: session.agent } : {}),
         ...(session.model !== undefined ? { model: { providerID: session.model.providerID, modelID: session.model.id } } : {}),
+        ...(session.model?.variant ? { variant: session.model.variant } : {}),
         ...(usage !== undefined ? { usage } : {}),
       });
     } catch (err) {
@@ -138,11 +157,13 @@ export class MetaState {
     }
     this.agentState.set(sessionId, agent);
     const model = this.modelState.get(sessionId);
+    const variant = this.variantState.get(sessionId);
     this.ctx.post({
       type: 'sessionMeta',
       sessionId,
       agent,
       ...(model !== undefined ? { model } : {}),
+      ...(variant !== undefined ? { variant } : {}),
     });
   }
 
@@ -155,12 +176,40 @@ export class MetaState {
       return;
     }
     this.modelState.set(sessionId, { providerID, modelID });
+    // Variants are model-specific — a model change invalidates the selection.
+    this.variantState.delete(sessionId);
     const agent = this.agentState.get(sessionId);
+    const variant = this.variantState.get(sessionId);
     this.ctx.post({
       type: 'sessionMeta',
       sessionId,
       model: { providerID, modelID },
       ...(agent !== undefined ? { agent } : {}),
+      ...(variant !== undefined ? { variant } : {}),
+    });
+  }
+
+  /** Handles a `setVariant` webview message. */
+  handleSetVariant(message: Record<string, unknown>): void {
+    const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
+    const variant = typeof message.variant === 'string' ? message.variant : undefined;
+    if (sessionId === undefined || variant === undefined) {
+      return;
+    }
+    if (variant === '') {
+      this.variantState.delete(sessionId);
+    } else {
+      this.variantState.set(sessionId, variant);
+    }
+    const agent = this.agentState.get(sessionId);
+    const model = this.modelState.get(sessionId);
+    const current = this.variantState.get(sessionId);
+    this.ctx.post({
+      type: 'sessionMeta',
+      sessionId,
+      ...(current !== undefined ? { variant: current } : {}),
+      ...(agent !== undefined ? { agent } : {}),
+      ...(model !== undefined ? { model } : {}),
     });
   }
 }
